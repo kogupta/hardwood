@@ -141,8 +141,7 @@ public class FileSchema {
     /// followed by each node in pre-order, groups carrying their child count.
     public List<SchemaElement> toSchemaElements() {
         List<SchemaElement> elements = new ArrayList<>(columns.size() + 1);
-        elements.add(new SchemaElement(name, null, null, rootNode.repetitionType(),
-                rootNode.children().size(), null, null, null, null, null));
+        elements.add(SchemaElement.group(name, rootNode.repetitionType(), rootNode.children().size()));
         appendElements(rootNode.children(), elements);
         return elements;
     }
@@ -520,8 +519,7 @@ public class FileSchema {
                 throw new IllegalArgumentException("Schema must have at least one column");
             }
             List<SchemaElement> elements = new ArrayList<>();
-            elements.add(new SchemaElement(name, null, null, RepetitionType.REQUIRED, content.children.size(),
-                    null, null, null, null, null));
+            elements.add(SchemaElement.group(name, RepetitionType.REQUIRED, content.children.size()));
             flatten(content.children, elements);
             return fromSchemaElements(elements);
         }
@@ -733,22 +731,19 @@ public class FileSchema {
                 case BuilderLeaf leaf -> out.add(new SchemaElement(
                         leaf.name(), leaf.type(), leaf.typeLength(), leaf.repetition(), null, null, null, null, null, null));
                 case BuilderStruct group -> {
-                    out.add(new SchemaElement(group.name(), null, null, group.repetition(),
-                            group.children().size(), null, null, null, null, null));
+                    out.add(SchemaElement.group(group.name(), group.repetition(), group.children().size()));
                     flatten(group.children(), out);
                 }
                 case BuilderList list -> {
                     out.add(new SchemaElement(list.name(), null, null, list.repetition(), 1,
                             ConvertedType.LIST, null, null, null, null));
-                    out.add(new SchemaElement("list", null, null, RepetitionType.REPEATED, 1,
-                            null, null, null, null, null));
+                    out.add(SchemaElement.group("list", RepetitionType.REPEATED, 1));
                     flatten(List.of(list.element()), out);
                 }
                 case BuilderMap map -> {
                     out.add(new SchemaElement(map.name(), null, null, map.repetition(), 1,
                             ConvertedType.MAP, null, null, null, null));
-                    out.add(new SchemaElement("key_value", null, null, RepetitionType.REPEATED, 2,
-                            null, null, null, null, null));
+                    out.add(SchemaElement.group("key_value", RepetitionType.REPEATED, 2));
                     out.add(new SchemaElement("key", map.keyType(), null, RepetitionType.REQUIRED, null,
                             null, null, null, null, null));
                     flatten(List.of(map.value()), out);
