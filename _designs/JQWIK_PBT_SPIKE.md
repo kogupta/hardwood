@@ -21,18 +21,17 @@ Should Hardwood incorporate jqwik property-based testing into its correctness wo
 
 Branch: `spike/pbt`.
 
-The spike added jqwik `1.9.3` through `test-bom` and added one test class for `ThriftEnumLookup`. Four properties generated arbitrary 32-bit integer ordinals outside the valid domains for physical type, page type, encoding and converted type.
+The spike added jqwik `1.9.3` through `test-bom` and added properties for two production areas. Four properties generate arbitrary 32-bit integer ordinals outside the valid domains for physical type, page type, encoding and converted type. One property generates RLE/bit-packing streams across bit widths 0 through 32 and variable array lengths, then compares encoder output decoded by the independent decoder with the generated values.
 
-Each property ran 100 tries.
+The enum properties run 100 tries each. The RLE property runs 200 tries.
 
 ## Evidence
 
-| Measurement | Result |
-|---|---:|
-| Property methods | 4 |
-| Generated cases | 400 |
+| Production areas | 2 |
+| Property methods | 5 |
+| Generated cases | 600 |
 | Property failures | 0 |
-| Full core tests | 2,654 |
+| Full core tests | 2,655 |
 | Full core failures | 0 |
 | Full core skipped | 1 |
 | Production defects found | 0 |
@@ -41,15 +40,15 @@ Each property ran 100 tries.
 | Metamorphic relations | 0 |
 | Observed shrinking of a reader failure | 0 |
 
-The result proves that jqwik `1.9.3` resolves through the test BOM, runs under the existing Surefire configuration, and can generate boundary ordinals. It does not measure the value of PBT for Hardwood's reader and writer correctness problems.
+The RLE property is stronger than the original enum-only test. It exercises a specification-sensitive byte encoding across every legal bit width, variable lengths, zero-width values, full-width values, and generated RLE or bit-packed output. Existing example tests cover many hand-selected RLE cases; this property adds randomized combinations and jqwik shrinking. No seeded defect has yet produced a minimized counterexample.
 
 ## Tradeoffs
 
 ### Benefits demonstrated
-
 - Test dependency integration is straightforward.
 - A compact generator covers negative and above-range integer boundaries better than a few hand-written examples.
-- The property source is small and deterministic enough for normal test execution.
+- A generated codec property covers all legal bit widths and variable stream lengths.
+- jqwik owns generated-array shrinking and reports deterministic property failures.
 
 ### Benefits not demonstrated
 
@@ -66,9 +65,13 @@ The result proves that jqwik `1.9.3` resolves through the test BOM, runs under t
 - Failure reproduction and artifact retention.
 - Whether generated inputs reach enough reader paths to justify the cost.
 
+## Test redundancy
+
+No existing test was removed. The spike adds one enum property class and one RLE property class. The existing example tests remain because they document named edge cases and provide readable failure messages. This spike did not compute kill-set subsumption, so it cannot claim that any existing test is redundant.
+
 ## Decision
 
-Do not incorporate whole-reader PBT based on this spike. The spike is an integration result, not a correctness result. Keep jqwik available as a candidate dependency and run a second bounded experiment before adoption.
+Do not incorporate whole-reader PBT based on this spike. The spike provides useful codec-property evidence, but it does not measure generated-file reader coverage. Adopt jqwik selectively for pure codec or finite-domain properties and run a separate file-generation experiment before adopting whole-reader PBT.
 
 The next experiment must generate a valid, shrinkable schema and record domain, write a real Parquet file, and assert a specified oracle. It must report:
 
