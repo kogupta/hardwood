@@ -17,6 +17,8 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
+import org.jspecify.annotations.Nullable;
+
 import dev.hardwood.internal.thrift.ThriftCompactConstants.FieldType.Codes;
 
 /// Reader for Thrift Compact Protocol using direct ByteBuffer access.
@@ -70,7 +72,7 @@ public class ThriftCompactReader {
     private short lastFieldId = 0;
     /// Per-decode cache of repeated column paths, created on first use so the page-header path —
     /// which has none — never allocates one.
-    private RepeatedPathCache pathCache;
+    private @Nullable RepeatedPathCache pathCache;
 
     /// Creates a reader that reads directly from a ByteBuffer.
     ///
@@ -530,7 +532,7 @@ public class ThriftCompactReader {
     /// distinction the metadata records carry through to their callers.
     ///
     /// @param fieldName fully-qualified field name for the log message
-    long[] readOptionalI64Array(String fieldName) throws IOException {
+    long @Nullable [] readOptionalI64Array(String fieldName) throws IOException {
         long header = acceptListHeader(Codes.I64, fieldName);
         if (header == ABSENT_LIST) {
             return null;

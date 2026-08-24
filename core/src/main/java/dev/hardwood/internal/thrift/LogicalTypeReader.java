@@ -9,6 +9,8 @@ package dev.hardwood.internal.thrift;
 
 import java.io.IOException;
 
+import org.jspecify.annotations.Nullable;
+
 import dev.hardwood.internal.thrift.ThriftCompactConstants.FieldType.Codes;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.LogicalType.EdgeInterpolationAlgorithm;
@@ -18,7 +20,7 @@ import dev.hardwood.metadata.LogicalType.TimeUnit;
 /// LogicalType is a union with different variants for each type.
 public class LogicalTypeReader {
 
-    public static LogicalType read(ThriftCompactReader reader) throws IOException {
+    public static @Nullable LogicalType read(ThriftCompactReader reader) throws IOException {
         short saved = reader.pushFieldIdContext();
         try {
             return readInternal(reader);
@@ -28,7 +30,7 @@ public class LogicalTypeReader {
         }
     }
 
-    private static LogicalType readInternal(ThriftCompactReader reader) throws IOException {
+    private static @Nullable LogicalType readInternal(ThriftCompactReader reader) throws IOException {
         LogicalType result = null;
 
         while (true) {

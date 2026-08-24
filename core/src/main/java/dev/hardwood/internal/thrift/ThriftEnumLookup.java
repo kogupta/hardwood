@@ -7,6 +7,8 @@
  */
 package dev.hardwood.internal.thrift;
 
+import org.jspecify.annotations.Nullable;
+
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.ConvertedType;
 import dev.hardwood.metadata.Encoding;
@@ -73,7 +75,7 @@ class ThriftEnumLookup {
     };
 
     // Indexed by Thrift value (0-9); 1 is a hole the format left behind
-    private static final Encoding[] ENCODINGS = {
+    private static final @Nullable Encoding[] ENCODINGS = {
             Encoding.PLAIN,                    // 0
             null,                              // 1 - GROUP_VAR_INT, withdrawn by the format
             Encoding.PLAIN_DICTIONARY,         // 2
@@ -138,7 +140,7 @@ class ThriftEnumLookup {
         throw new IllegalArgumentException("Unknown repetition type: " + value);
     }
 
-    static ConvertedType convertedType(int value) {
+    static @Nullable ConvertedType convertedType(int value) {
         if (value >= 0 && value < CONVERTED_TYPES.length) {
             return CONVERTED_TYPES[value];
         }
@@ -200,7 +202,7 @@ class ThriftEnumLookup {
         return indexOf(COMPRESSION_CODECS, codec, "compression codec");
     }
 
-    private static <T> int indexOf(T[] table, T value, String what) {
+    private static <T> int indexOf(@Nullable T[] table, T value, String what) {
         for (int i = 0; i < table.length; i++) {
             if (table[i] == value) {
                 return i;

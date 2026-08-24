@@ -9,6 +9,8 @@ package dev.hardwood.internal.thrift;
 
 import java.io.IOException;
 
+import org.jspecify.annotations.Nullable;
+
 import dev.hardwood.internal.thrift.ThriftCompactConstants.FieldType.Codes;
 import dev.hardwood.metadata.BoundingBox;
 
@@ -76,7 +78,7 @@ public class BoundingBoxReader {
         return reader.readDouble();
     }
 
-    private static Double readOptionalDouble(ThriftCompactReader reader, byte type) throws IOException {
+    private static @Nullable Double readOptionalDouble(ThriftCompactReader reader, byte type) throws IOException {
         if (type == Codes.DOUBLE) {
             return reader.readDouble();
         }

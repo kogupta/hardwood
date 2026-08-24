@@ -12,6 +12,8 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
+import org.jspecify.annotations.Nullable;
+
 import dev.hardwood.internal.thrift.ThriftCompactConstants.FieldType.Codes;
 import dev.hardwood.metadata.Encoding;
 import dev.hardwood.metadata.PageEncodingStats;
@@ -61,7 +63,7 @@ class PageEncodingStatsReader {
     /// Returns `null` for a struct that does not carry all three at that wire type, or whose
     /// count is negative. The struct is consumed either way, leaving the reader on the next
     /// element.
-    private static PageEncodingStats readStats(ThriftCompactReader reader) throws IOException {
+    private static @Nullable PageEncodingStats readStats(ThriftCompactReader reader) throws IOException {
         short saved = reader.pushFieldIdContext();
         try {
             PageType pageType = null;

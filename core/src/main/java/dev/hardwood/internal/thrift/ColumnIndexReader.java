@@ -11,6 +11,8 @@ import java.io.IOException;
 import java.util.Collections;
 import java.util.List;
 
+import org.jspecify.annotations.Nullable;
+
 import dev.hardwood.internal.thrift.ThriftCompactConstants.FieldType.Codes;
 import dev.hardwood.metadata.ColumnIndex;
 
@@ -135,8 +137,9 @@ public class ColumnIndexReader {
     /// The histograms hold `maxLevel + 1` entries per page rather than one, so only their
     /// divisibility by the page count can be checked.
     private static void checkPageCounts(int pageCount, int minValueCount, int maxValueCount,
-            long[] nullCounts, long[] nanCounts, long[] repetitionLevelHistograms,
-            long[] definitionLevelHistograms) throws IOException {
+            long @Nullable [] nullCounts, long @Nullable [] nanCounts,
+            long @Nullable [] repetitionLevelHistograms,
+            long @Nullable [] definitionLevelHistograms) throws IOException {
 
         checkPerPageLength("min_values", minValueCount, pageCount);
         checkPerPageLength("max_values", maxValueCount, pageCount);
@@ -157,7 +160,8 @@ public class ColumnIndexReader {
         }
     }
 
-    private static void checkHistogramLength(String field, long[] histograms, int pageCount) throws IOException {
+    private static void checkHistogramLength(
+            String field, long @Nullable [] histograms, int pageCount) throws IOException {
         if (histograms == null) {
             return;
         }
