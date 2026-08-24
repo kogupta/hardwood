@@ -59,6 +59,10 @@ The XML report identifies every survivor by source file, method, line, mutator a
 - PIT compatibility is version-sensitive on JDK 25.
 - Mutation runs are too expensive and noisy for every normal verification.
 
+## Test redundancy
+
+No existing test was removed by this spike. PIT reports mutant kill coverage, not test redundancy. A redundancy decision requires comparing test kill sets; that matrix was not generated here. The 110 survivors and 171 no-coverage mutants are adequacy findings, not evidence that any existing test can be deleted.
+
 ## Decision
 
 Incorporate PIT as an opt-in, package-scoped adequacy check. Do not add it to normal `verify`. Start with parser and metadata packages, where boundary mutants have a clear robustness contract. Record survivors and dispositions in a checked-in or CI artifact. Keep no-coverage and timed-out results separate from survivors.
