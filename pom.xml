@@ -67,7 +67,8 @@
     <auto-service.version>1.1.1</auto-service.version>
     <error-prone.version>2.49.0</error-prone.version>
     <hadoop.version>3.4.3</hadoop.version>
-    <japicmp.newVersion>${project.version}</japicmp.newVersion>
+    <pitest.version>1.25.9</pitest.version>
+    <pitest.junit5.version>1.2.2</pitest.junit5.version>
     <java.version>21</java.version>
     <java.version.build>25</java.version.build>
     <maven.compiler.parameters>true</maven.compiler.parameters>
@@ -255,11 +256,16 @@
           <artifactId>native-maven-plugin</artifactId>
           <version>0.10.6</version>
         </plugin>
-          <plugin>
-            <groupId>org.jreleaser</groupId>
-            <artifactId>jreleaser-maven-plugin</artifactId>
-            <version>1.22.0</version>
-          </plugin>
+        <plugin>
+          <groupId>org.pitest</groupId>
+          <artifactId>pitest-maven</artifactId>
+          <version>${pitest.version}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.jreleaser</groupId>
+          <artifactId>jreleaser-maven-plugin</artifactId>
+          <version>1.22.0</version>
+        </plugin>
         <plugin>
           <groupId>org.codehaus.mojo</groupId>
           <artifactId>flatten-maven-plugin</artifactId>
