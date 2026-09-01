@@ -8,13 +8,14 @@
 package dev.hardwood.cli.command;
 
 import java.io.ByteArrayOutputStream;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 
 import org.apache.avro.Schema;
+import org.apache.avro.SchemaParseException;
 import org.apache.avro.file.DataFileWriter;
 import org.apache.avro.generic.GenericDatumWriter;
-import org.apache.avro.SchemaParseException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -227,9 +228,9 @@ class SchemaCommandTest implements SchemaCommandContract {
 
         assertThat(result.exitCode()).isZero();
         assertThat(result.output())
-                .contains("{\"type\": \"fixed\", \"name\": \"Interval\", \"size\": 12}")
-                .contains(", \"type\": \"Interval\"")
-                .contains("{\"type\": \"fixed\", \"name\": \"Float16\", \"size\": 2}");
+                .contains("{\"type\": \"fixed\", \"name\": \"interval\", \"size\": 12}")
+                .contains(", \"type\": \"interval\"")
+                .contains("{\"type\": \"fixed\", \"name\": \"float16\", \"size\": 2}");
         parseAndCreateFileHeader(result.output());
     }
 
@@ -243,7 +244,34 @@ class SchemaCommandTest implements SchemaCommandContract {
         Cli.Result result = Cli.launch("schema", "-f", parquetFile.toString(), "--format", "AVRO");
 
         assertThat(result.exitCode()).isNotZero();
-        assertThat(result.errorOutput()).contains("conflicts with the canonical Interval fixed type");
+        assertThat(result.errorOutput()).contains("conflicts with the canonical interval fixed type");
+    }
+
+    /// Two legal raw names that capitalize to one type candidate must resolve by raw
+    /// name — not declaration order — so reordering the columns cannot swap their fixed
+    /// full names (`Md5` sorts before `md5`).
+    @Test
+    void resolvesCollidingLegalFixedCandidatesIndependentlyOfDeclarationOrder(@TempDir Path tempDir) throws Exception {
+        FileSchema.Builder schema = FileSchema.builder("schema");
+        schema.addColumn("md5", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 16)
+                .addColumn("Md5", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 16);
+        Path declaredMd5First = write(Files.createDirectories(tempDir.resolve("md5-first")), schema.build());
+        schema = FileSchema.builder("schema");
+        schema.addColumn("Md5", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 16)
+                .addColumn("md5", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 16);
+        Path declaredMd5Last = write(Files.createDirectories(tempDir.resolve("md5-last")), schema.build());
+
+        Cli.Result first = Cli.launch("schema", "-f", declaredMd5First.toString(), "--format", "AVRO");
+        Cli.Result second = Cli.launch("schema", "-f", declaredMd5Last.toString(), "--format", "AVRO");
+
+        assertThat(first.exitCode()).isZero();
+        assertThat(second.exitCode()).isZero();
+        for (Cli.Result result : List.of(first, second)) {
+            assertThat(result.output())
+                    .contains("{\"type\": \"fixed\", \"name\": \"Md5\", \"namespace\": \"Schema\", \"size\": 16}")
+                    .contains("{\"type\": \"fixed\", \"name\": \"Md5_2\", \"namespace\": \"Schema\", \"size\": 16}");
+            parseAndCreateFileHeader(result.output());
+        }
     }
 
     @Test

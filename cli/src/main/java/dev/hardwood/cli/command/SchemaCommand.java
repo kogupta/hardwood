@@ -59,20 +59,23 @@ public class SchemaCommand implements Command<CommandInvocation> {
         try (ParquetFileReader reader = ParquetFileReader.open(inputFile)) {
             FileSchema schema = reader.getFileSchema();
 
-            String output = switch (format) {
-                case NATIVE -> schema.toString();
-                case AVRO -> toAvroSchema(schema);
-                case PROTO -> toProtoSchema(schema);
-            };
+            String output;
+            try {
+                output = switch (format) {
+                    case NATIVE -> schema.toString();
+                    case AVRO -> toAvroSchema(schema);
+                    case PROTO -> toProtoSchema(schema);
+                };
+            }
+            catch (IllegalArgumentException e) {
+                System.err.println("Error rendering schema: " + e.getMessage());
+                return CommandResult.FAILURE;
+            }
 
             System.out.println(output);
         }
         catch (IOException e) {
             System.err.println("Error reading file: " + e.getMessage());
-            return CommandResult.FAILURE;
-        }
-        catch (IllegalArgumentException e) {
-            System.err.println("Error rendering schema: " + e.getMessage());
             return CommandResult.FAILURE;
         }
 
@@ -188,10 +191,10 @@ public class SchemaCommand implements Command<CommandInvocation> {
         switch (prim.type()) {
             case FIXED_LEN_BYTE_ARRAY -> {
                 if (prim.logicalType() instanceof LogicalType.IntervalType) {
-                    sb.append(names.canonicalFixed("Interval", 12));
+                    sb.append(names.canonicalFixed("interval", 12));
                 }
                 else if (prim.logicalType() instanceof LogicalType.Float16Type) {
-                    sb.append(names.canonicalFixed("Float16", 2));
+                    sb.append(names.canonicalFixed("float16", 2));
                 }
                 else {
                     sb.append(names.fixedReference(prim));
@@ -368,9 +371,9 @@ public class SchemaCommand implements Command<CommandInvocation> {
         static AvroTypeNames forSchema(FileSchema schema) {
             AvroTypeNames names = new AvroTypeNames(schema);
             SchemaNode.GroupNode root = schema.getRootNode();
+            names.rejectCanonicalRootConflict(SchemaNames.sanitize(schema.getName()));
             String rootName = SchemaNames.sanitize(capitalize(schema.getName()));
             names.fullNames.put(root, rootName);
-            names.rejectCanonicalRootConflict(rootName);
             names.visitRecordChildren(root, rootName);
             return names;
         }
@@ -417,13 +420,17 @@ public class SchemaCommand implements Command<CommandInvocation> {
         }
 
         private void rejectCanonicalRootConflict(String rootName) {
-            if ("Interval".equals(rootName) && containsLogicalType(LogicalType.IntervalType.class)) {
+            // Mirrors hardwood-avro's converter: a root whose (sanitized) name is the
+            // canonical fixed name cannot coexist with a column carrying that logical
+            // type. The CLI capitalizes the root for display, so only the raw name can
+            // actually collide.
+            if ("interval".equals(rootName) && containsLogicalType(LogicalType.IntervalType.class)) {
                 throw new IllegalArgumentException(
-                        "Schema root name '" + rootName + "' conflicts with the canonical Interval fixed type");
+                        "Schema root name '" + rootName + "' conflicts with the canonical interval fixed type");
             }
-            if ("Float16".equals(rootName) && containsLogicalType(LogicalType.Float16Type.class)) {
+            if ("float16".equals(rootName) && containsLogicalType(LogicalType.Float16Type.class)) {
                 throw new IllegalArgumentException(
-                        "Schema root name '" + rootName + "' conflicts with the canonical Float16 fixed type");
+                        "Schema root name '" + rootName + "' conflicts with the canonical float16 fixed type");
             }
         }
 
@@ -521,16 +528,28 @@ public class SchemaCommand implements Command<CommandInvocation> {
         }
 
         private static NodeCandidate winnerOf(List<NodeCandidate> members) {
-            NodeCandidate smallest = members.getFirst();
+            // The plan's total ordering: a legal raw candidate wins the bare candidate,
+            // legal candidates competing with each other by raw name; without a legal
+            // candidate the smallest raw name wins. Members arrive in declaration order,
+            // so exact duplicate raw names keep source order.
+            NodeCandidate winner = null;
             for (NodeCandidate member : members) {
-                if (SchemaNames.isLegal(member.raw())) {
-                    return member;
+                if (!SchemaNames.isLegal(member.raw())) {
+                    continue;
                 }
-                if (member.raw().compareTo(smallest.raw()) < 0) {
-                    smallest = member;
+                if (winner == null || member.raw().compareTo(winner.raw()) < 0) {
+                    winner = member;
                 }
             }
-            return smallest;
+            if (winner != null) {
+                return winner;
+            }
+            for (NodeCandidate member : members) {
+                if (winner == null || member.raw().compareTo(winner.raw()) < 0) {
+                    winner = member;
+                }
+            }
+            return winner;
         }
 
         private static String typeCandidate(SchemaNode node) {
