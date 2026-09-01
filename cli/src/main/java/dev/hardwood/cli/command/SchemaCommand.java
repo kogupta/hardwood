@@ -224,8 +224,12 @@ public class SchemaCommand implements Command<CommandInvocation> {
         sb.append("}");
     }
 
+    /// Avro fixes map keys to strings, so a map is representable only when its Parquet
+    /// key is a string-compatible primitive: BYTE_ARRAY annotated STRING, ENUM, or
+    /// JSON. Anything else is reported, never silently narrowed.
     static void validateAvroMapKey(SchemaNode key, String mapName) {
         boolean representable = key instanceof SchemaNode.PrimitiveNode keyPrim
+                && keyPrim.type() == PhysicalType.BYTE_ARRAY
                 && (keyPrim.logicalType() instanceof LogicalType.StringType
                         || keyPrim.logicalType() instanceof LogicalType.EnumType
                         || keyPrim.logicalType() instanceof LogicalType.JsonType);
@@ -256,7 +260,7 @@ public class SchemaCommand implements Command<CommandInvocation> {
             case BYTE_ARRAY -> prim.logicalType() instanceof LogicalType.StringType
                     || prim.logicalType() instanceof LogicalType.EnumType
                     || prim.logicalType() instanceof LogicalType.JsonType ? "string" : "bytes";
-            case FIXED_LEN_BYTE_ARRAY, INT96 -> throw new IllegalStateException(
+            case FIXED_LEN_BYTE_ARRAY, INT96 -> throw new IllegalArgumentException(
                     "Fixed-width types are rendered as named Avro fixed types, not scalars");
         };
     }
@@ -505,16 +509,20 @@ public class SchemaCommand implements Command<CommandInvocation> {
                                 .min(Comparator.comparing(SchemaNode::name))
                                 .orElseThrow());
                 resolved.put(winner, entry.getKey());
-                for (SchemaNode member : members) {
-                    if (member == winner) {
-                        continue;
-                    }
+                // Losers receive their suffixes in raw-name order, mirroring the
+                // named-candidate resolver: reordering columns cannot swap a retained
+                // full name. Exact duplicate raw names keep declaration order via the
+                // stable sort.
+                List<SchemaNode> losers = new ArrayList<>(members);
+                losers.remove(winner);
+                losers.sort(Comparator.comparing(SchemaNode::name));
+                for (SchemaNode loser : losers) {
                     String local = entry.getKey();
                     int suffix = 2;
                     while (!used.add(local + "_" + suffix)) {
                         suffix++;
                     }
-                    resolved.put(member, local + "_" + suffix);
+                    resolved.put(loser, local + "_" + suffix);
                 }
             }
             return resolved;

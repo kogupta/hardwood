@@ -555,6 +555,45 @@ class SchemaCommandTest implements SchemaCommandContract {
         return parsed;
     }
 
+    /// Three container fields sanitizing to one segment exercise the loser tier: only
+    /// `a_b` is a legal raw name (the hyphen and space are illegal), so it keeps the bare
+    /// segment, and the losers receive `_2`/`_3` by raw-name order (`a b` sorts before
+    /// `a-b`), not by declaration order — the first file declares the losers in the
+    /// opposite order, so a declaration-order implementation fails this test.
+    @Test
+    void ordersCollidingContainerLoserSegmentsByRawName(@TempDir Path tempDir) throws Exception {
+        FileSchema.Builder firstBuilder = FileSchema.builder("schema")
+                .list("a_b", RepetitionType.REQUIRED, element -> element
+                        .primitive(PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 16))
+                .list("a-b", RepetitionType.REQUIRED, element -> element
+                        .primitive(PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 4))
+                .list("a b", RepetitionType.REQUIRED, element -> element
+                        .primitive(PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 8));
+        Path firstFile = write(Files.createDirectories(tempDir.resolve("first")), firstBuilder.build());
+
+        FileSchema.Builder secondBuilder = FileSchema.builder("schema")
+                .list("a b", RepetitionType.REQUIRED, element -> element
+                        .primitive(PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 8))
+                .list("a-b", RepetitionType.REQUIRED, element -> element
+                        .primitive(PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 4))
+                .list("a_b", RepetitionType.REQUIRED, element -> element
+                        .primitive(PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 16));
+        Path secondFile = write(Files.createDirectories(tempDir.resolve("second")), secondBuilder.build());
+
+        Cli.Result first = Cli.launch("schema", "-f", firstFile.toString(), "--format", "AVRO");
+        Cli.Result second = Cli.launch("schema", "-f", secondFile.toString(), "--format", "AVRO");
+
+        assertThat(first.exitCode()).isZero();
+        assertThat(second.exitCode()).isZero();
+        for (Cli.Result result : List.of(first, second)) {
+            assertThat(result.output())
+                    .contains("\"name\": \"Element\", \"namespace\": \"Schema.a_b\", \"size\": 16")
+                    .contains("\"name\": \"Element\", \"namespace\": \"Schema.a_b_2\", \"size\": 8")
+                    .contains("\"name\": \"Element\", \"namespace\": \"Schema.a_b_3\", \"size\": 4");
+            parseAndCreateFileHeader(result.output());
+        }
+    }
+
     private static Path write(Path tempDir, FileSchema schema) throws Exception {
         Path parquetFile = tempDir.resolve("names.parquet");
         try (ParquetFileWriter ignored = ParquetFileWriter.create(OutputFile.of(parquetFile), schema)) {
