@@ -9,9 +9,13 @@ package dev.hardwood.cli.command;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 
 import org.aesh.command.Command;
 import org.aesh.command.CommandDefinition;
@@ -24,6 +28,7 @@ import dev.hardwood.InputFile;
 import dev.hardwood.cli.internal.JsonStrings;
 import dev.hardwood.internal.schema.SchemaNames;
 import dev.hardwood.metadata.LogicalType;
+import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.FileSchema;
@@ -66,6 +71,10 @@ public class SchemaCommand implements Command<CommandInvocation> {
             System.err.println("Error reading file: " + e.getMessage());
             return CommandResult.FAILURE;
         }
+        catch (IllegalArgumentException e) {
+            System.err.println("Error rendering schema: " + e.getMessage());
+            return CommandResult.FAILURE;
+        }
 
         return CommandResult.SUCCESS;
     }
@@ -73,12 +82,14 @@ public class SchemaCommand implements Command<CommandInvocation> {
     // ── Avro ─────────────────────────────────────────────────────────────────
 
     private static String toAvroSchema(FileSchema schema) {
+        AvroTypeNames names = AvroTypeNames.forSchema(schema);
         StringBuilder sb = new StringBuilder();
-        appendAvroRecord(sb, schema.getRootNode(), schema.getName(), 0);
+        appendAvroRecord(sb, schema.getRootNode(), schema.getName(), 0, names);
         return sb.toString();
     }
 
-    private static void appendAvroRecord(StringBuilder sb, SchemaNode.GroupNode group, String name, int indent) {
+    private static void appendAvroRecord(StringBuilder sb, SchemaNode.GroupNode group, String name, int indent,
+            AvroTypeNames names) {
         String p = "  ".repeat(indent);
         sb.append(p).append("{\n");
         sb.append(p).append("  \"type\": \"record\",\n");
@@ -93,7 +104,7 @@ public class SchemaCommand implements Command<CommandInvocation> {
         Set<String> usedNames = new HashSet<>(children.size());
         for (int i = 0; i < children.size(); i++) {
             SchemaNode child = children.get(i);
-            appendAvroField(sb, child, disambiguate(SchemaNames.sanitize(child.name()), usedNames), indent + 2);
+            appendAvroField(sb, child, disambiguate(SchemaNames.sanitize(child.name()), usedNames), indent + 2, names);
             if (i < children.size() - 1) {
                 sb.append(",");
             }
@@ -104,7 +115,8 @@ public class SchemaCommand implements Command<CommandInvocation> {
         sb.append(p).append("}");
     }
 
-    private static void appendAvroField(StringBuilder sb, SchemaNode node, String avroName, int indent) {
+    private static void appendAvroField(StringBuilder sb, SchemaNode node, String avroName, int indent,
+            AvroTypeNames names) {
         boolean optional = node.repetitionType() == RepetitionType.OPTIONAL;
         String p = "  ".repeat(indent);
         sb.append(p).append("{ \"name\": \"").append(avroName).append("\", ");
@@ -113,7 +125,7 @@ public class SchemaCommand implements Command<CommandInvocation> {
             sb.append(doc).append(" ");
         }
         sb.append("\"type\": ");
-        appendAvroType(sb, node, optional, indent);
+        appendAvroType(sb, node, optional, indent, names);
         if (optional) {
             sb.append(", \"default\": null");
         }
@@ -142,26 +154,85 @@ public class SchemaCommand implements Command<CommandInvocation> {
         return candidate;
     }
 
-    private static void appendAvroType(StringBuilder sb, SchemaNode node, boolean optional, int indent) {
+    private static void appendAvroType(StringBuilder sb, SchemaNode node, boolean optional, int indent,
+            AvroTypeNames names) {
         if (optional) {
             sb.append("[\"null\", ");
         }
         switch (node) {
-            case SchemaNode.PrimitiveNode prim -> sb.append("\"").append(primitiveToAvroType(prim)).append("\"");
+            case SchemaNode.PrimitiveNode prim -> appendAvroPrimitiveType(sb, prim, names);
             case SchemaNode.GroupNode group when group.isList() -> {
                 SchemaNode elem = group.getListElement();
-                String itemType = elem instanceof SchemaNode.PrimitiveNode prim ? primitiveToAvroType(prim) : "string";
-                sb.append("{\"type\": \"array\", \"items\": \"").append(itemType).append("\"}");
+                if (elem == null) {
+                    throw new IllegalArgumentException("List '" + group.name() + "' has no resolvable element");
+                }
+                sb.append("{\"type\": \"array\", \"items\": ");
+                appendAvroType(sb, elem, elem.repetitionType() == RepetitionType.OPTIONAL, indent + 1, names);
+                sb.append("}");
             }
-            case SchemaNode.GroupNode group when group.isMap() -> sb.append("{\"type\": \"map\", \"values\": \"string\"}");
+            case SchemaNode.GroupNode group when group.isMap() -> appendAvroMapType(sb, group, indent, names);
             case SchemaNode.GroupNode group -> {
                 sb.append("\n");
-                appendAvroRecord(sb, group, group.name(), indent);
+                appendAvroRecord(sb, group, group.name(), indent, names);
             }
         }
         if (optional) {
             sb.append("]");
         }
+    }
+
+    /// Renders the type of a primitive. `FIXED_LEN_BYTE_ARRAY` and `INT96` preserve
+    /// their physical width as a named Avro `fixed`; every other primitive keeps the
+    /// plain scalar mapping.
+    private static void appendAvroPrimitiveType(StringBuilder sb, SchemaNode.PrimitiveNode prim, AvroTypeNames names) {
+        switch (prim.type()) {
+            case FIXED_LEN_BYTE_ARRAY -> {
+                if (prim.logicalType() instanceof LogicalType.IntervalType) {
+                    sb.append(names.canonicalFixed("Interval", 12));
+                }
+                else if (prim.logicalType() instanceof LogicalType.Float16Type) {
+                    sb.append(names.canonicalFixed("Float16", 2));
+                }
+                else {
+                    sb.append(names.fixedReference(prim));
+                }
+            }
+            case INT96 -> sb.append(names.fixedReference(prim));
+            default -> sb.append("\"").append(primitiveToAvroType(prim)).append("\"");
+        }
+    }
+
+    /// Avro fixes map keys to strings, so a map is only representable when its Parquet
+    /// key is a string-compatible primitive; anything else is reported, never silently
+    /// narrowed. The value keeps its recursive structure. A key-only map has no value
+    /// type at all, which Avro renders as bare `null` values.
+    private static void appendAvroMapType(StringBuilder sb, SchemaNode.GroupNode group, int indent,
+            AvroTypeNames names) {
+        SchemaNode key = group.getMapKey();
+        boolean representableKey = key instanceof SchemaNode.PrimitiveNode keyPrim
+                && (keyPrim.logicalType() instanceof LogicalType.StringType
+                        || keyPrim.logicalType() instanceof LogicalType.EnumType
+                        || keyPrim.logicalType() instanceof LogicalType.JsonType);
+        if (!representableKey) {
+            throw new IllegalArgumentException("Avro map keys must be STRING, ENUM, or JSON; map '" + group.name()
+                    + "' has key " + describeKeyType(key));
+        }
+        sb.append("{\"type\": \"map\", \"values\": ");
+        SchemaNode value = group.getMapValue();
+        if (value == null) {
+            sb.append("\"null\"");
+        }
+        else {
+            appendAvroType(sb, value, value.repetitionType() == RepetitionType.OPTIONAL, indent + 1, names);
+        }
+        sb.append("}");
+    }
+
+    private static String describeKeyType(SchemaNode key) {
+        if (key instanceof SchemaNode.PrimitiveNode prim) {
+            return prim.logicalType() == null ? prim.type().toString() : prim.type() + " (" + prim.logicalType() + ")";
+        }
+        return "group '" + key.name() + "'";
     }
 
     private static String primitiveToAvroType(SchemaNode.PrimitiveNode prim) {
@@ -173,11 +244,12 @@ public class SchemaCommand implements Command<CommandInvocation> {
                 boolean unsignedInt = prim.logicalType() instanceof LogicalType.IntType it && !it.isSigned() && it.bitWidth() == 32;
                 yield unsignedInt ? "long" : "int";
             }
-            case INT64, INT96 -> "long";
+            case INT64 -> "long";
             case BYTE_ARRAY -> prim.logicalType() instanceof LogicalType.StringType
                     || prim.logicalType() instanceof LogicalType.EnumType
                     || prim.logicalType() instanceof LogicalType.JsonType ? "string" : "bytes";
-            case FIXED_LEN_BYTE_ARRAY -> "bytes";
+            case FIXED_LEN_BYTE_ARRAY, INT96 -> throw new IllegalStateException(
+                    "Fixed-width types are rendered as named Avro fixed types, not scalars");
         };
     }
 
@@ -268,6 +340,218 @@ public class SchemaCommand implements Command<CommandInvocation> {
                     || prim.logicalType() instanceof LogicalType.JsonType ? "string" : "bytes";
             case FIXED_LEN_BYTE_ARRAY -> prim.logicalType() instanceof LogicalType.UuidType ? "string" : "bytes";
         };
+    }
+
+    /// Conversion-wide registry of the named Avro types (records and fixed types) the
+    /// emitter defines. Names are resolved for the whole schema before rendering begins,
+    /// so every declaration and reference of a named type agrees on its final name.
+    ///
+    /// Path rules: the root keeps the CLI's existing effective name; a direct struct or
+    /// fixed child of a record is namespaced by that record's full name; a list or map
+    /// field contributes its disambiguated, uncapitalized, sanitized field-name segment
+    /// before a named descendant. Local candidates are `sanitize(capitalize(node.name()))`.
+    /// Candidates colliding inside one namespace resolve by the #895 ordering: a legal
+    /// raw name wins the bare candidate, otherwise the smallest raw name wins, exact
+    /// duplicates fall back to declaration order, and every loser receives `_2`, `_3`, ….
+    /// The canonical `Interval` and `Float16` fixed types are reserved globally,
+    /// unnamespaced, and defined once.
+    private static final class AvroTypeNames {
+
+        private final FileSchema schema;
+        private final Map<SchemaNode, String> fullNames = new IdentityHashMap<>();
+        private final Set<String> emitted = new HashSet<>();
+
+        private AvroTypeNames(FileSchema schema) {
+            this.schema = schema;
+        }
+
+        static AvroTypeNames forSchema(FileSchema schema) {
+            AvroTypeNames names = new AvroTypeNames(schema);
+            SchemaNode.GroupNode root = schema.getRootNode();
+            String rootName = SchemaNames.sanitize(capitalize(schema.getName()));
+            names.fullNames.put(root, rootName);
+            names.rejectCanonicalRootConflict(rootName);
+            names.visitRecordChildren(root, rootName);
+            return names;
+        }
+
+        /// Renders the named `fixed` for `prim`: the definition at the type's first use,
+        /// a full-name reference afterwards.
+        String fixedReference(SchemaNode.PrimitiveNode prim) {
+            String fullName = fullNames.get(prim);
+            if (fullName == null) {
+                throw new IllegalArgumentException("No resolved name for fixed column " + prim.name());
+            }
+            if (emitted.add(fullName)) {
+                StringBuilder def = new StringBuilder();
+                def.append("{\"type\": \"fixed\", \"name\": \"").append(localName(fullName)).append("\"");
+                String namespace = namespaceOf(fullName);
+                if (!namespace.isEmpty()) {
+                    def.append(", \"namespace\": \"").append(namespace).append("\"");
+                }
+                def.append(", \"size\": ").append(fixedSize(prim)).append("}");
+                return def.toString();
+            }
+            return "\"" + fullName + "\"";
+        }
+
+        /// Renders the canonical, unnamespaced fixed type `name`: the definition at its
+        /// first use, a bare-name reference afterwards.
+        String canonicalFixed(String name, int size) {
+            if (emitted.add(name)) {
+                return "{\"type\": \"fixed\", \"name\": \"" + name + "\", \"size\": " + size + "}";
+            }
+            return "\"" + name + "\"";
+        }
+
+        private int fixedSize(SchemaNode.PrimitiveNode prim) {
+            if (prim.type() == PhysicalType.INT96) {
+                return 12;
+            }
+            Integer typeLength = schema.getColumn(prim.columnIndex()).typeLength();
+            if (typeLength == null) {
+                throw new IllegalArgumentException("FIXED_LEN_BYTE_ARRAY column '" + prim.name()
+                        + "' is missing its type length");
+            }
+            return typeLength;
+        }
+
+        private void rejectCanonicalRootConflict(String rootName) {
+            if ("Interval".equals(rootName) && containsLogicalType(LogicalType.IntervalType.class)) {
+                throw new IllegalArgumentException(
+                        "Schema root name '" + rootName + "' conflicts with the canonical Interval fixed type");
+            }
+            if ("Float16".equals(rootName) && containsLogicalType(LogicalType.Float16Type.class)) {
+                throw new IllegalArgumentException(
+                        "Schema root name '" + rootName + "' conflicts with the canonical Float16 fixed type");
+            }
+        }
+
+        private boolean containsLogicalType(Class<? extends LogicalType> type) {
+            return schema.getColumns().stream().anyMatch(column -> type.isInstance(column.logicalType()));
+        }
+
+        private void visitRecordChildren(SchemaNode.GroupNode record, String scope) {
+            List<SchemaNode> children = record.children();
+            Set<String> usedFields = new HashSet<>(children.size());
+            List<NodeCandidate> named = new ArrayList<>(children.size());
+            for (SchemaNode child : children) {
+                String fieldName = disambiguate(SchemaNames.sanitize(child.name()), usedFields);
+                switch (child) {
+                    case SchemaNode.GroupNode g when g.isList() -> {
+                        SchemaNode elem = g.getListElement();
+                        if (elem != null) {
+                            visitContainer(elem, join(scope, fieldName));
+                        }
+                    }
+                    case SchemaNode.GroupNode g when g.isMap() -> {
+                        SchemaNode value = g.getMapValue();
+                        if (value != null) {
+                            visitContainer(value, join(scope, fieldName));
+                        }
+                    }
+                    case SchemaNode.GroupNode g -> named.add(new NodeCandidate(g, scope, typeCandidate(g), g.name()));
+                    case SchemaNode.PrimitiveNode p
+                            when p.type() == PhysicalType.FIXED_LEN_BYTE_ARRAY || p.type() == PhysicalType.INT96 ->
+                        named.add(new NodeCandidate(p, scope, typeCandidate(p), p.name()));
+                    default -> { }
+                }
+            }
+            resolve(named);
+            for (NodeCandidate candidate : named) {
+                if (candidate.node() instanceof SchemaNode.GroupNode g) {
+                    visitRecordChildren(g, fullNames.get(g));
+                }
+            }
+        }
+
+        /// Visits a list element or map value sitting in `namespace`. Containers pass
+        /// through, contributing their own name as the next segment; a struct or fixed
+        /// descendant is the sole named type of its namespace.
+        private void visitContainer(SchemaNode node, String namespace) {
+            switch (node) {
+                case SchemaNode.GroupNode g when g.isList() -> {
+                    SchemaNode elem = g.getListElement();
+                    if (elem != null) {
+                        visitContainer(elem, join(namespace, SchemaNames.sanitize(g.name())));
+                    }
+                }
+                case SchemaNode.GroupNode g when g.isMap() -> {
+                    SchemaNode value = g.getMapValue();
+                    if (value != null) {
+                        visitContainer(value, join(namespace, SchemaNames.sanitize(g.name())));
+                    }
+                }
+                case SchemaNode.GroupNode g -> {
+                    String fullName = join(namespace, typeCandidate(g));
+                    fullNames.put(g, fullName);
+                    visitRecordChildren(g, fullName);
+                }
+                case SchemaNode.PrimitiveNode p
+                        when p.type() == PhysicalType.FIXED_LEN_BYTE_ARRAY || p.type() == PhysicalType.INT96 ->
+                    fullNames.put(p, join(namespace, typeCandidate(p)));
+                default -> { }
+            }
+        }
+
+        private void resolve(List<NodeCandidate> named) {
+            Map<String, List<NodeCandidate>> groups = new TreeMap<>();
+            for (NodeCandidate candidate : named) {
+                groups.computeIfAbsent(candidate.candidate(), ignored -> new ArrayList<>()).add(candidate);
+            }
+            // Every bare candidate is reserved up front, so a suffix never lands on
+            // another sibling's bare name.
+            Set<String> used = new HashSet<>(groups.keySet());
+            for (List<NodeCandidate> members : groups.values()) {
+                NodeCandidate winner = winnerOf(members);
+                fullNames.put(winner.node(), join(winner.namespace(), winner.candidate()));
+                List<NodeCandidate> losers = new ArrayList<>(members);
+                losers.remove(winner);
+                // Stable sort: exact duplicate raw names keep declaration order.
+                losers.sort(Comparator.comparing(NodeCandidate::raw));
+                for (NodeCandidate loser : losers) {
+                    String local = winner.candidate();
+                    String renamed = local;
+                    for (int suffix = 2; !used.add(renamed); suffix++) {
+                        renamed = local + "_" + suffix;
+                    }
+                    fullNames.put(loser.node(), join(loser.namespace(), renamed));
+                }
+            }
+        }
+
+        private static NodeCandidate winnerOf(List<NodeCandidate> members) {
+            NodeCandidate smallest = members.getFirst();
+            for (NodeCandidate member : members) {
+                if (SchemaNames.isLegal(member.raw())) {
+                    return member;
+                }
+                if (member.raw().compareTo(smallest.raw()) < 0) {
+                    smallest = member;
+                }
+            }
+            return smallest;
+        }
+
+        private static String typeCandidate(SchemaNode node) {
+            return SchemaNames.sanitize(capitalize(node.name()));
+        }
+
+        private static String join(String namespace, String segment) {
+            return namespace.isEmpty() ? segment : namespace + "." + segment;
+        }
+
+        private static String localName(String fullName) {
+            return fullName.substring(fullName.lastIndexOf('.') + 1);
+        }
+
+        private static String namespaceOf(String fullName) {
+            int lastDot = fullName.lastIndexOf('.');
+            return lastDot < 0 ? "" : fullName.substring(0, lastDot);
+        }
+
+        private record NodeCandidate(SchemaNode node, String namespace, String candidate, String raw) {
+        }
     }
 
     private static String capitalize(String s) {
