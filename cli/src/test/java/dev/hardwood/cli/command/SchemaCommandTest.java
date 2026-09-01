@@ -29,6 +29,7 @@ import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ParquetFileWriter;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class SchemaCommandTest implements SchemaCommandContract {
 
@@ -235,7 +236,7 @@ class SchemaCommandTest implements SchemaCommandContract {
     }
 
     @Test
-    void rejectsRootNamedLikeACanonicalFixedType(@TempDir Path tempDir) throws Exception {
+    void permitsCapitalizedRootAlongsideCanonicalFixedType(@TempDir Path tempDir) throws Exception {
         Path parquetFile = write(tempDir, FileSchema.builder("interval")
                 .addColumn("span", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 12,
                         new LogicalType.IntervalType())
@@ -243,8 +244,19 @@ class SchemaCommandTest implements SchemaCommandContract {
 
         Cli.Result result = Cli.launch("schema", "-f", parquetFile.toString(), "--format", "AVRO");
 
-        assertThat(result.exitCode()).isNotZero();
-        assertThat(result.errorOutput()).contains("conflicts with the canonical interval fixed type");
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output())
+                .contains("\"name\": \"Interval\"")
+                .contains("{\"type\": \"fixed\", \"name\": \"interval\", \"size\": 12}");
+        parseAndCreateFileHeader(result.output());
+    }
+
+    @Test
+    void rejectsMissingAvroMapKeyClearly() {
+        assertThatThrownBy(() -> SchemaCommand.validateAvroMapKey(null, "broken"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("map 'broken'")
+                .hasMessageContaining("missing key");
     }
 
     /// Two legal raw names that capitalize to one type candidate must resolve by raw
@@ -270,6 +282,35 @@ class SchemaCommandTest implements SchemaCommandContract {
             assertThat(result.output())
                     .contains("{\"type\": \"fixed\", \"name\": \"Md5\", \"namespace\": \"Schema\", \"size\": 16}")
                     .contains("{\"type\": \"fixed\", \"name\": \"Md5_2\", \"namespace\": \"Schema\", \"size\": 16}");
+            parseAndCreateFileHeader(result.output());
+        }
+    }
+
+    @Test
+    void keepsFixedContainerNamesStableWhenFieldsAreReordered(@TempDir Path tempDir) throws Exception {
+        FileSchema.Builder firstBuilder = FileSchema.builder("schema")
+                .list("a-b", RepetitionType.REQUIRED, element -> element
+                        .primitive(PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 4))
+                .list("a b", RepetitionType.REQUIRED, element -> element
+                        .primitive(PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 8));
+        Path firstFile = write(Files.createDirectories(tempDir.resolve("first")), firstBuilder.build());
+
+        FileSchema.Builder secondBuilder = FileSchema.builder("schema")
+                .list("a b", RepetitionType.REQUIRED, element -> element
+                        .primitive(PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 8))
+                .list("a-b", RepetitionType.REQUIRED, element -> element
+                        .primitive(PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 4));
+        Path secondFile = write(Files.createDirectories(tempDir.resolve("second")), secondBuilder.build());
+
+        Cli.Result first = Cli.launch("schema", "-f", firstFile.toString(), "--format", "AVRO");
+        Cli.Result second = Cli.launch("schema", "-f", secondFile.toString(), "--format", "AVRO");
+
+        assertThat(first.exitCode()).isZero();
+        assertThat(second.exitCode()).isZero();
+        for (Cli.Result result : List.of(first, second)) {
+            assertThat(result.output())
+                    .contains("{\"type\": \"fixed\", \"name\": \"Element\", \"namespace\": \"Schema.a_b\", \"size\": 8}")
+                    .contains("{\"type\": \"fixed\", \"name\": \"Element\", \"namespace\": \"Schema.a_b_2\", \"size\": 4}");
             parseAndCreateFileHeader(result.output());
         }
     }

@@ -212,14 +212,7 @@ public class SchemaCommand implements Command<CommandInvocation> {
     private static void appendAvroMapType(StringBuilder sb, SchemaNode.GroupNode group, int indent,
             AvroTypeNames names) {
         SchemaNode key = group.getMapKey();
-        boolean representableKey = key instanceof SchemaNode.PrimitiveNode keyPrim
-                && (keyPrim.logicalType() instanceof LogicalType.StringType
-                        || keyPrim.logicalType() instanceof LogicalType.EnumType
-                        || keyPrim.logicalType() instanceof LogicalType.JsonType);
-        if (!representableKey) {
-            throw new IllegalArgumentException("Avro map keys must be STRING, ENUM, or JSON; map '" + group.name()
-                    + "' has key " + describeKeyType(key));
-        }
+        validateAvroMapKey(key, group.name());
         sb.append("{\"type\": \"map\", \"values\": ");
         SchemaNode value = group.getMapValue();
         if (value == null) {
@@ -229,6 +222,18 @@ public class SchemaCommand implements Command<CommandInvocation> {
             appendAvroType(sb, value, value.repetitionType() == RepetitionType.OPTIONAL, indent + 1, names);
         }
         sb.append("}");
+    }
+
+    static void validateAvroMapKey(SchemaNode key, String mapName) {
+        boolean representable = key instanceof SchemaNode.PrimitiveNode keyPrim
+                && (keyPrim.logicalType() instanceof LogicalType.StringType
+                        || keyPrim.logicalType() instanceof LogicalType.EnumType
+                        || keyPrim.logicalType() instanceof LogicalType.JsonType);
+        if (!representable) {
+            String description = key == null ? "missing key" : describeKeyType(key);
+            throw new IllegalArgumentException("Avro map keys must be STRING, ENUM, or JSON; map '" + mapName
+                    + "' has key " + description);
+        }
     }
 
     private static String describeKeyType(SchemaNode key) {
@@ -371,7 +376,6 @@ public class SchemaCommand implements Command<CommandInvocation> {
         static AvroTypeNames forSchema(FileSchema schema) {
             AvroTypeNames names = new AvroTypeNames(schema);
             SchemaNode.GroupNode root = schema.getRootNode();
-            names.rejectCanonicalRootConflict(SchemaNames.sanitize(schema.getName()));
             String rootName = SchemaNames.sanitize(capitalize(schema.getName()));
             names.fullNames.put(root, rootName);
             names.visitRecordChildren(root, rootName);
@@ -419,42 +423,23 @@ public class SchemaCommand implements Command<CommandInvocation> {
             return typeLength;
         }
 
-        private void rejectCanonicalRootConflict(String rootName) {
-            // Mirrors hardwood-avro's converter: a root whose (sanitized) name is the
-            // canonical fixed name cannot coexist with a column carrying that logical
-            // type. The CLI capitalizes the root for display, so only the raw name can
-            // actually collide.
-            if ("interval".equals(rootName) && containsLogicalType(LogicalType.IntervalType.class)) {
-                throw new IllegalArgumentException(
-                        "Schema root name '" + rootName + "' conflicts with the canonical interval fixed type");
-            }
-            if ("float16".equals(rootName) && containsLogicalType(LogicalType.Float16Type.class)) {
-                throw new IllegalArgumentException(
-                        "Schema root name '" + rootName + "' conflicts with the canonical float16 fixed type");
-            }
-        }
-
-        private boolean containsLogicalType(Class<? extends LogicalType> type) {
-            return schema.getColumns().stream().anyMatch(column -> type.isInstance(column.logicalType()));
-        }
 
         private void visitRecordChildren(SchemaNode.GroupNode record, String scope) {
             List<SchemaNode> children = record.children();
-            Set<String> usedFields = new HashSet<>(children.size());
+            Map<SchemaNode, String> containerSegments = resolveContainerSegments(children);
             List<NodeCandidate> named = new ArrayList<>(children.size());
             for (SchemaNode child : children) {
-                String fieldName = disambiguate(SchemaNames.sanitize(child.name()), usedFields);
                 switch (child) {
                     case SchemaNode.GroupNode g when g.isList() -> {
                         SchemaNode elem = g.getListElement();
                         if (elem != null) {
-                            visitContainer(elem, join(scope, fieldName));
+                            visitContainer(elem, join(scope, containerSegments.get(g)));
                         }
                     }
                     case SchemaNode.GroupNode g when g.isMap() -> {
                         SchemaNode value = g.getMapValue();
                         if (value != null) {
-                            visitContainer(value, join(scope, fieldName));
+                            visitContainer(value, join(scope, containerSegments.get(g)));
                         }
                     }
                     case SchemaNode.GroupNode g -> named.add(new NodeCandidate(g, scope, typeCandidate(g), g.name()));
@@ -499,6 +484,40 @@ public class SchemaCommand implements Command<CommandInvocation> {
                     fullNames.put(p, join(namespace, typeCandidate(p)));
                 default -> { }
             }
+        }
+
+        private static Map<SchemaNode, String> resolveContainerSegments(List<SchemaNode> children) {
+            Map<String, List<SchemaNode>> groups = new TreeMap<>();
+            for (SchemaNode child : children) {
+                if (child instanceof SchemaNode.GroupNode group && (group.isList() || group.isMap())) {
+                    String candidate = SchemaNames.sanitize(group.name());
+                    groups.computeIfAbsent(candidate, ignored -> new ArrayList<>()).add(group);
+                }
+            }
+            Set<String> used = new HashSet<>(groups.keySet());
+            Map<SchemaNode, String> resolved = new IdentityHashMap<>();
+            for (Map.Entry<String, List<SchemaNode>> entry : groups.entrySet()) {
+                List<SchemaNode> members = entry.getValue();
+                SchemaNode winner = members.stream()
+                        .filter(node -> SchemaNames.isLegal(node.name()))
+                        .min(Comparator.comparing(SchemaNode::name))
+                        .orElseGet(() -> members.stream()
+                                .min(Comparator.comparing(SchemaNode::name))
+                                .orElseThrow());
+                resolved.put(winner, entry.getKey());
+                for (SchemaNode member : members) {
+                    if (member == winner) {
+                        continue;
+                    }
+                    String local = entry.getKey();
+                    int suffix = 2;
+                    while (!used.add(local + "_" + suffix)) {
+                        suffix++;
+                    }
+                    resolved.put(member, local + "_" + suffix);
+                }
+            }
+            return resolved;
         }
 
         private void resolve(List<NodeCandidate> named) {
