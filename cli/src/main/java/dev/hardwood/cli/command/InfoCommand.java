@@ -118,16 +118,22 @@ public class InfoCommand implements Command<CommandInvocation> {
         int keyWidth = 0;
         int sizeWidth = 0;
         for (Map.Entry<String, String> entry : keyValueMetadata.entrySet()) {
-            keyWidth = Math.max(keyWidth, Strings.width(entry.getKey()));
+            String key = displayKey(entry.getKey());
+            keyWidth = Math.max(keyWidth, Strings.width(key));
             sizeWidth = Math.max(sizeWidth, size(entry.getValue()).length());
         }
 
         for (Map.Entry<String, String> entry : keyValueMetadata.entrySet()) {
-            String line = "  " + Strings.padRight(entry.getKey(), keyWidth)
+            String key = displayKey(entry.getKey());
+            String line = "  " + Strings.padRight(key, keyWidth)
                     + "  " + Fmt.fmt("%" + sizeWidth + "s", size(entry.getValue()));
             String rendered = render(entry.getValue());
             System.out.println(rendered.isEmpty() ? line : line + "  " + rendered);
         }
+    }
+
+    static String displayKey(String key) {
+        return Strings.sanitizeControls(key);
     }
 
     /// The size column for one entry: the value's length in bytes as written to the
