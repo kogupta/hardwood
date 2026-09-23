@@ -23,6 +23,12 @@
   <description>Core Parquet reader implementation</description>
   <url>https://hardwood.dev/</url>
 
+  <properties>
+    <!-- Kept outside the checkerframework profile: the checker-qual dependency
+         added for the index annotations must resolve with the profile inactive. -->
+    <checker-framework.version>4.2.3</checker-framework.version>
+  </properties>
+
   <scm>
     <connection>scm:git:git://github.com/hardwood-hq/hardwood.git</connection>
     <developerConnection>scm:git:git@github.com:hardwood-hq/hardwood.git</developerConnection>
@@ -213,4 +219,96 @@
       </plugin>
     </plugins>
   </build>
+
+  <profiles>
+    <!-- #1283 spike: runs the Checker Framework Index Checker (Constant Value
+         Checker included as its subchecker) over the default compile execution
+         only. Forking is the Checker Framework manual's requirement — an
+         unforked javac silently ignores the -J VM-access flags — and a forked
+         compiler is per-execution, which is what keeps test sources and the
+         java22 multi-release sources out of the checker's scope. Manual
+         activation: -Pcheckerframework. -->
+    <profile>
+      <id>checkerframework</id>
+      <!-- The checker resolves its annotated-JDK annotations (e.g. dataflow's
+           @Deterministic, which lives in checker-qual) through the compilation
+           classpath; the processor path alone does not feed that lookup on
+           current JDKs. Provided scope: compile-time only, never packaged. -->
+      <dependencies>
+        <dependency>
+          <groupId>org.checkerframework</groupId>
+          <artifactId>checker-qual</artifactId>
+          <version>${checker-framework.version}</version>
+          <scope>provided</scope>
+        </dependency>
+      </dependencies>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-compiler-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>default-compile</id>
+                <configuration>
+                  <fork>true</fork>
+                  <annotationProcessorPaths combine.children="append">
+                    <path>
+                      <groupId>org.checkerframework</groupId>
+                      <artifactId>checker</artifactId>
+                      <version>${checker-framework.version}</version>
+                    </path>
+                    <!-- annotationProcessorPaths does not resolve transitive
+                         dependencies; these two are checker's declared runtime
+                         dependencies and the processor loads classes from them
+                         reflectively (e.g. dataflow.qual.Deterministic from
+                         checker-qual while reading the annotated JDK). -->
+                    <path>
+                      <groupId>org.checkerframework</groupId>
+                      <artifactId>checker-qual</artifactId>
+                      <version>${checker-framework.version}</version>
+                    </path>
+                    <path>
+                      <groupId>org.checkerframework</groupId>
+                      <artifactId>checker-util</artifactId>
+                      <version>${checker-framework.version}</version>
+                    </path>
+                  </annotationProcessorPaths>
+                  <annotationProcessors>
+                    <annotationProcessor>org.checkerframework.checker.index.IndexChecker</annotationProcessor>
+                  </annotationProcessors>
+                  <compilerArgs combine.children="append">
+                    <arg>-J--add-exports=jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED</arg>
+                    <arg>-J--add-exports=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED</arg>
+                    <arg>-J--add-exports=jdk.compiler/com.sun.tools.javac.file=ALL-UNNAMED</arg>
+                    <arg>-J--add-exports=jdk.compiler/com.sun.tools.javac.main=ALL-UNNAMED</arg>
+                    <arg>-J--add-exports=jdk.compiler/com.sun.tools.javac.model=ALL-UNNAMED</arg>
+                    <arg>-J--add-exports=jdk.compiler/com.sun.tools.javac.parser=ALL-UNNAMED</arg>
+                    <arg>-J--add-exports=jdk.compiler/com.sun.tools.javac.processing=ALL-UNNAMED</arg>
+                    <arg>-J--add-exports=jdk.compiler/com.sun.tools.javac.tree=ALL-UNNAMED</arg>
+                    <arg>-J--add-exports=jdk.compiler/com.sun.tools.javac.util=ALL-UNNAMED</arg>
+                    <arg>-J--add-opens=jdk.compiler/com.sun.tools.javac.comp=ALL-UNNAMED</arg>
+                    <arg>-Awarns</arg>
+                    <arg>-AskipUses=^(org\.xerial\.snappy|com\.github\.luben|at\.yawk\.lz4|com\.aayushatharva\.brotli4j)</arg>
+                    <!-- #1283 spike, documented deviation: the Checker Framework
+                         crashes (BugInCF in ElementAnnotationApplier: no handler
+                         for ElementKind.BINDING_VARIABLE) on array-typed pattern
+                         binding variables, e.g. "values instanceof int[] a".
+                         Probed: skipping the individual methods does not gate the
+                         crashing phase, skipping the classes does. The three
+                         classes below are the only ones with that construct; the
+                         rest of the module stays checked. Recorded in
+                         _designs/CHECKER_FRAMEWORK_SPIKE.md. -->
+                    <arg>-AskipDefs=dev\.hardwood\.reader\.ColumnReader|dev\.hardwood\.reader\.SelectionEngine|dev\.hardwood\.internal\.reader\.FlyweightFormatter</arg>
+                    <arg>-Xmaxwarns</arg>
+                    <arg>100000</arg>
+                  </compilerArgs>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
 </project>
