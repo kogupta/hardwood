@@ -8,6 +8,8 @@
 package dev.hardwood.tools.columnindex;
 
 import java.lang.annotation.Annotation;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
 
 import javax.lang.model.element.AnnotationMirror;
@@ -18,12 +20,14 @@ import org.checkerframework.common.basetype.BaseTypeChecker;
 import org.checkerframework.framework.type.AnnotatedTypeMirror;
 import org.checkerframework.javacutil.AnnotationBuilder;
 import org.checkerframework.javacutil.BugInCF;
+import org.checkerframework.javacutil.SwitchExpressionScanner.FunctionalSwitchExpressionScanner;
 import org.checkerframework.javacutil.TreeUtils;
 
 import com.sun.source.tree.BinaryTree;
 import com.sun.source.tree.ConditionalExpressionTree;
 import com.sun.source.tree.ExpressionTree;
 import com.sun.source.tree.LiteralTree;
+import com.sun.source.tree.SwitchExpressionTree;
 import com.sun.source.tree.Tree;
 import com.sun.source.tree.TypeCastTree;
 import com.sun.source.tree.UnaryTree;
@@ -42,7 +46,8 @@ import dev.hardwood.tools.columnindex.qual.ProjectedIndexOrAbsent;
 /// a counter such as `for (int i = 0; ...; i++)` belongs to no space unless its declaration names
 /// one, and `for (@ProjectedIndex int p = 0; ...; p++)` reads as a projected index throughout the
 /// loop. The same holds for parameters, fields, named constants, and for `i++` and `--i`, which
-/// read as the declared type of `i`. A conditional reads as the least upper bound of its branches.
+/// read as the declared type of `i`. A conditional or switch expression reads as the least upper
+/// bound of its results.
 public final class ColumnIndexAnnotatedTypeFactory extends BaseAnnotatedTypeFactory {
 
     private final AnnotationMirror top;
@@ -91,7 +96,11 @@ public final class ColumnIndexAnnotatedTypeFactory extends BaseAnnotatedTypeFact
             case IDENTIFIER, MEMBER_SELECT -> declaredQualifier(TreeUtils.elementFromTree(value));
             case PREFIX_INCREMENT, PREFIX_DECREMENT, POSTFIX_INCREMENT, POSTFIX_DECREMENT ->
                     declaredQualifier(TreeUtils.elementFromTree(((UnaryTree) value).getExpression()));
-            case CONDITIONAL_EXPRESSION -> branchesQualifier((ConditionalExpressionTree) value);
+            case CONDITIONAL_EXPRESSION -> {
+                ConditionalExpressionTree conditional = (ConditionalExpressionTree) value;
+                yield resultsQualifier(List.of(conditional.getTrueExpression(), conditional.getFalseExpression()));
+            }
+            case SWITCH_EXPRESSION -> resultsQualifier(switchResults((SwitchExpressionTree) value));
             default -> top;
         };
     }
@@ -104,18 +113,32 @@ public final class ColumnIndexAnnotatedTypeFactory extends BaseAnnotatedTypeFact
         return declared == null ? top : declared;
     }
 
-    private AnnotationMirror branchesQualifier(ConditionalExpressionTree conditional) {
-        AnnotationMirror whenTrue = qualifier(conditional.getTrueExpression());
-        AnnotationMirror whenFalse = qualifier(conditional.getFalseExpression());
-        AnnotationMirror bound = getQualifierHierarchy().leastUpperBoundQualifiersOnly(whenTrue, whenFalse);
-        if (bound == null) {
-            throw new BugInCF("no least upper bound of %s and %s", whenTrue, whenFalse);
+    private AnnotationMirror resultsQualifier(List<ExpressionTree> results) {
+        AnnotationMirror bound = null;
+        for (ExpressionTree result : results) {
+            AnnotationMirror qualifier = qualifier(result);
+            bound = bound == null ? qualifier
+                    : getQualifierHierarchy().leastUpperBoundQualifiersOnly(bound, qualifier);
+            if (bound == null) {
+                throw new BugInCF("no least upper bound of the results of %s", results);
+            }
         }
-        return bound;
+        return bound == null ? top : bound;
+    }
+
+    /// The expressions a switch expression can yield: the body of each `->` case that is an
+    /// expression, and the value of each `yield`.
+    static List<ExpressionTree> switchResults(SwitchExpressionTree switchExpression) {
+        List<ExpressionTree> results = new ArrayList<>();
+        new FunctionalSwitchExpressionScanner<Void, Void>((result, p) -> {
+            results.add(result);
+            return null;
+        }, (first, second) -> null).scanSwitchExpression(switchExpression, null);
+        return results;
     }
 
     private AnnotationMirror qualifier(ExpressionTree expression) {
-        AnnotationMirror qualifier = getAnnotatedType(expression).getPrimaryAnnotationInHierarchy(top);
+        AnnotationMirror qualifier = getAnnotatedType(expression).getAnnotationInHierarchy(top);
         if (qualifier == null) {
             throw new BugInCF("no column-index qualifier on %s", expression);
         }

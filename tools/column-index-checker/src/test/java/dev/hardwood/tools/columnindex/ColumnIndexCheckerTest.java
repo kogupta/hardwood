@@ -8,6 +8,7 @@
 package dev.hardwood.tools.columnindex;
 
 import java.net.URI;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -20,6 +21,7 @@ import javax.tools.SimpleJavaFileObject;
 import javax.tools.ToolProvider;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -27,6 +29,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// The sources follow the shape of the multi-file read path: a reference-schema ordinal has to
 /// pass through a per-file mapping before it may pick a column chunk of that file.
 class ColumnIndexCheckerTest {
+
+    @TempDir
+    static Path classes;
 
     /// `FileSchema` as the checker sees it: a container of columns picked by position.
     private static final String FILE_SCHEMA = """
@@ -41,7 +46,9 @@ class ColumnIndexCheckerTest {
     private static final String HEADER = """
             import java.util.ArrayList;
             import java.util.Arrays;
+            import java.util.Collections;
             import java.util.List;
+            import java.util.Objects;
             import dev.hardwood.schema.FileSchema;
             import dev.hardwood.tools.columnindex.qual.FileOrdinal;
             import dev.hardwood.tools.columnindex.qual.IndexedBy;
@@ -71,7 +78,7 @@ class ColumnIndexCheckerTest {
                     return chunks.get(original);
                 }
                 """)).containsExactly("""
-                16:23 [subscript.space] index of the wrong column-index space for chunks.
+                18:23 [subscript.space] index of the wrong column-index space for chunks.
                   found   : @OriginalIndex
                   required: @FileOrdinal""");
     }
@@ -83,7 +90,7 @@ class ColumnIndexCheckerTest {
                     return projectedToOriginal[projected];
                 }
                 """)).containsExactly("""
-                16:32 [subscript.space] index of the wrong column-index space for projectedToOriginal.
+                18:32 [subscript.space] index of the wrong column-index space for projectedToOriginal.
                   found   : @ProjectedIndex
                   required: @OriginalIndex""");
     }
@@ -95,7 +102,7 @@ class ColumnIndexCheckerTest {
                     return fileOrdinal(projected);
                 }
                 """)).containsExactly("""
-                16:24 [argument] incompatible argument for parameter referenceOrdinal of Read.fileOrdinal.
+                18:24 [argument] incompatible argument for parameter referenceOrdinal of Read.fileOrdinal.
                   found   : @ProjectedIndex int
                   required: @OriginalIndex int""");
     }
@@ -129,7 +136,7 @@ class ColumnIndexCheckerTest {
                     return alias.get(original);
                 }
                 """)).containsExactly("""
-                16:18 [indexedby.handover] alias is indexed by another column-index space than the value handed to it.
+                18:18 [indexedby.handover] alias is indexed by another column-index space than the value handed to it.
                   found   : @IndexedBy(FileOrdinal.class)
                   required: no @IndexedBy""");
     }
@@ -141,7 +148,7 @@ class ColumnIndexCheckerTest {
                     readChunks(referenceChunks);
                 }
                 """)).containsExactly("""
-                16:16 [indexedby.handover] fileChunks is indexed by another column-index space than the value handed to it.
+                18:16 [indexedby.handover] fileChunks is indexed by another column-index space than the value handed to it.
                   found   : @IndexedBy(OriginalIndex.class)
                   required: @IndexedBy(FileOrdinal.class)""");
     }
@@ -153,7 +160,7 @@ class ColumnIndexCheckerTest {
                     chunks = other;
                 }
                 """)).containsExactly("""
-                16:12 [indexedby.handover] chunks is indexed by another column-index space than the value handed to it.
+                18:12 [indexedby.handover] chunks is indexed by another column-index space than the value handed to it.
                   found   : no @IndexedBy
                   required: @IndexedBy(FileOrdinal.class)""");
     }
@@ -165,7 +172,7 @@ class ColumnIndexCheckerTest {
                     return chunks;
                 }
                 """)).containsExactly("""
-                16:5 [indexedby.handover] referenceChunks() is indexed by another column-index space than the value handed to it.
+                18:5 [indexedby.handover] referenceChunks() is indexed by another column-index space than the value handed to it.
                   found   : @IndexedBy(FileOrdinal.class)
                   required: @IndexedBy(OriginalIndex.class)""");
     }
@@ -177,7 +184,7 @@ class ColumnIndexCheckerTest {
                     chunks.set(original, "x");
                 }
                 """)).containsExactly("""
-                16:16 [subscript.space] index of the wrong column-index space for chunks.
+                18:16 [subscript.space] index of the wrong column-index space for chunks.
                   found   : @OriginalIndex
                   required: @FileOrdinal""");
     }
@@ -189,7 +196,7 @@ class ColumnIndexCheckerTest {
                     return (@FileOrdinal int) ordinal;
                 }
                 """)).containsExactly("""
-                16:12 [cast.unsafe] cast from "@ColumnIndexUnknown int" to "@FileOrdinal int" cannot be statically verified""");
+                18:12 [cast.unsafe] cast from "@ColumnIndexUnknown int" to "@FileOrdinal int" cannot be statically verified""");
     }
 
     @Test
@@ -200,7 +207,7 @@ class ColumnIndexCheckerTest {
                     other = new ArrayList<>();
                 }
                 """)).containsExactly("""
-                15:43 [indexedby.invalid] @IndexedBy names java.lang.Deprecated, which is not a column-index space""");
+                17:43 [indexedby.invalid] @IndexedBy names java.lang.Deprecated, which is not a column-index space""");
     }
 
     @Test
@@ -227,11 +234,11 @@ class ColumnIndexCheckerTest {
                     return all;
                 }
                 """)).containsExactly("""
-                18:27 [subscript.space] index of the wrong column-index space for chunks.
+                20:27 [subscript.space] index of the wrong column-index space for chunks.
                   found   : @ProjectedIndex
                   required: @FileOrdinal""",
                 """
-                18:44 [argument] incompatible argument for parameter referenceOrdinal of Read.fileOrdinal.
+                20:44 [argument] incompatible argument for parameter referenceOrdinal of Read.fileOrdinal.
                   found   : @ProjectedIndex int
                   required: @OriginalIndex int""");
     }
@@ -247,11 +254,11 @@ class ColumnIndexCheckerTest {
                     return all;
                 }
                 """)).containsExactly("""
-                18:27 [subscript.space] index of the wrong column-index space for chunks.
+                20:27 [subscript.space] index of the wrong column-index space for chunks.
                   found   : @ColumnIndexUnknown
                   required: @FileOrdinal""",
                 """
-                18:44 [argument] incompatible argument for parameter referenceOrdinal of Read.fileOrdinal.
+                20:44 [argument] incompatible argument for parameter referenceOrdinal of Read.fileOrdinal.
                   found   : @ColumnIndexUnknown int
                   required: @OriginalIndex int""");
     }
@@ -264,11 +271,11 @@ class ColumnIndexCheckerTest {
                     return schema.getColumns().get(original);
                 }
                 """)).containsExactly("""
-                16:50 [indexedby.handover] columns is indexed by another column-index space than the value handed to it.
+                18:50 [indexedby.handover] columns is indexed by another column-index space than the value handed to it.
                   found   : @IndexedBy(FileOrdinal.class)
                   required: @IndexedBy(OriginalIndex.class)""",
                 """
-                17:36 [subscript.space] index of the wrong column-index space for schema.
+                19:36 [subscript.space] index of the wrong column-index space for schema.
                   found   : @OriginalIndex
                   required: @FileOrdinal""");
     }
@@ -282,7 +289,7 @@ class ColumnIndexCheckerTest {
                     return chunks.get(p);
                 }
                 """)).containsExactly("""
-                18:23 [subscript.space] index of the wrong column-index space for chunks.
+                20:23 [subscript.space] index of the wrong column-index space for chunks.
                   found   : @ColumnIndexUnknown
                   required: @FileOrdinal""");
     }
@@ -299,7 +306,7 @@ class ColumnIndexCheckerTest {
                     return all;
                 }
                 """)).containsExactly("""
-                19:27 [subscript.space] index of the wrong column-index space for chunks.
+                21:27 [subscript.space] index of the wrong column-index space for chunks.
                   found   : @ColumnIndexUnknown
                   required: @FileOrdinal""");
     }
@@ -312,7 +319,7 @@ class ColumnIndexCheckerTest {
                     return chunks.get(i++);
                 }
                 """)).containsExactly("""
-                17:24 [subscript.space] index of the wrong column-index space for chunks.
+                19:24 [subscript.space] index of the wrong column-index space for chunks.
                   found   : @ColumnIndexUnknown
                   required: @FileOrdinal""");
     }
@@ -326,7 +333,7 @@ class ColumnIndexCheckerTest {
                     return chunks.get(FIRST) + chunks.get(FIRST_FILE_COLUMN);
                 }
                 """)).containsExactly("""
-                18:23 [subscript.space] index of the wrong column-index space for chunks.
+                20:23 [subscript.space] index of the wrong column-index space for chunks.
                   found   : @ColumnIndexUnknown
                   required: @FileOrdinal""");
     }
@@ -352,15 +359,15 @@ class ColumnIndexCheckerTest {
                     return kept[projected];
                 }
                 """)).containsExactly("""
-                16:11 [indexedby.handover] copy is indexed by another column-index space than the value handed to it.
+                18:11 [indexedby.handover] copy is indexed by another column-index space than the value handed to it.
                   found   : @IndexedBy(OriginalIndex.class)
                   required: no @IndexedBy""",
                 """
-                17:11 [indexedby.handover] prefix is indexed by another column-index space than the value handed to it.
+                19:11 [indexedby.handover] prefix is indexed by another column-index space than the value handed to it.
                   found   : @IndexedBy(OriginalIndex.class)
                   required: no @IndexedBy""",
                 """
-                19:17 [subscript.space] index of the wrong column-index space for kept.
+                21:17 [subscript.space] index of the wrong column-index space for kept.
                   found   : @ProjectedIndex
                   required: @OriginalIndex""");
     }
@@ -374,7 +381,7 @@ class ColumnIndexCheckerTest {
                     readChunks(new ArrayList<>(3));
                 }
                 """)).containsExactly("""
-                16:50 [indexedby.handover] relabelled is indexed by another column-index space than the value handed to it.
+                18:50 [indexedby.handover] relabelled is indexed by another column-index space than the value handed to it.
                   found   : @IndexedBy(FileOrdinal.class)
                   required: @IndexedBy(OriginalIndex.class)""");
     }
@@ -387,11 +394,11 @@ class ColumnIndexCheckerTest {
                     return (first ? chunks : other).get(original);
                 }
                 """)).containsExactly("""
-                16:18 [indexedby.handover] either is indexed by another column-index space than the value handed to it.
+                18:18 [indexedby.handover] either is indexed by another column-index space than the value handed to it.
                   found   : @IndexedBy(FileOrdinal.class)
                   required: no @IndexedBy""",
                 """
-                17:41 [subscript.space] index of the wrong column-index space for chunks.
+                19:41 [subscript.space] index of the wrong column-index space for chunks.
                   found   : @OriginalIndex
                   required: @FileOrdinal""");
     }
@@ -406,7 +413,7 @@ class ColumnIndexCheckerTest {
                     return help(chunks, f) + String.join(",", chunks);
                 }
                 """)).containsExactly("""
-                19:17 [indexedby.handover] list is indexed by another column-index space than the value handed to it.
+                21:17 [indexedby.handover] list is indexed by another column-index space than the value handed to it.
                   found   : @IndexedBy(FileOrdinal.class)
                   required: no @IndexedBy""");
     }
@@ -422,14 +429,208 @@ class ColumnIndexCheckerTest {
                 """)).isEmpty();
     }
 
+    @Test
+    void switchOfContainers() {
+        assertThat(check("""
+                String pick(int n, @OriginalIndex int original) {
+                    List<String> either = switch (n) { case 1 -> chunks; default -> { yield chunks; } };
+                    return (switch (n) { default -> chunks; }).get(original);
+                }
+                """)).containsExactly("""
+                18:18 [indexedby.handover] either is indexed by another column-index space than the value handed to it.
+                  found   : @IndexedBy(FileOrdinal.class)
+                  required: no @IndexedBy""",
+                """
+                19:52 [subscript.space] index of the wrong column-index space for chunks.
+                  found   : @OriginalIndex
+                  required: @FileOrdinal""");
+    }
+
+    @Test
+    void switchOfLiterals() {
+        assertThat(check("""
+                int pick(int n) {
+                    return projectedToOriginal[switch (n) { case 1 -> 0; default -> { yield 1; } }];
+                }
+                """)).isEmpty();
+    }
+
+    @Test
+    void widenedContainerKeepsSpace() {
+        assertThat(check("""
+                void widen() {
+                    Object any = chunks;
+                    Iterable<String> all = chunks;
+                }
+                """)).containsExactly("""
+                18:12 [indexedby.handover] any is indexed by another column-index space than the value handed to it.
+                  found   : @IndexedBy(FileOrdinal.class)
+                  required: no @IndexedBy""",
+                """
+                19:22 [indexedby.handover] all is indexed by another column-index space than the value handed to it.
+                  found   : @IndexedBy(FileOrdinal.class)
+                  required: no @IndexedBy""");
+    }
+
+    @Test
+    void castKeepsSpace() {
+        assertThat(check("""
+                String cast(@IndexedBy(FileOrdinal.class) FileSchema schema, @OriginalIndex int original) {
+                    List<String> same = (List<String>) (Iterable<String>) chunks;
+                    return ((List<String>) (Iterable<String>) schema.getColumns()).get(original);
+                }
+                """)).containsExactly("""
+                18:18 [indexedby.handover] same is indexed by another column-index space than the value handed to it.
+                  found   : @IndexedBy(FileOrdinal.class)
+                  required: no @IndexedBy""",
+                """
+                19:72 [subscript.space] index of the wrong column-index space for schema.
+                  found   : @OriginalIndex
+                  required: @FileOrdinal""");
+    }
+
+    @Test
+    void viewsAndIdentityKeepSpace() {
+        assertThat(check("""
+                void views() {
+                    List<String> view = Collections.unmodifiableList(chunks);
+                    List<String> same = Objects.requireNonNull(chunks);
+                    Object[] array = chunks.toArray();
+                    List<String> part = chunks.subList(1, 2);
+                }
+                """)).containsExactly("""
+                18:18 [indexedby.handover] view is indexed by another column-index space than the value handed to it.
+                  found   : @IndexedBy(FileOrdinal.class)
+                  required: no @IndexedBy""",
+                """
+                19:18 [indexedby.handover] same is indexed by another column-index space than the value handed to it.
+                  found   : @IndexedBy(FileOrdinal.class)
+                  required: no @IndexedBy""",
+                """
+                20:14 [indexedby.handover] array is indexed by another column-index space than the value handed to it.
+                  found   : @IndexedBy(FileOrdinal.class)
+                  required: no @IndexedBy""");
+    }
+
+    @Test
+    void arrayElementHoldsNoSpace() {
+        assertThat(check("""
+                void store(List<String>[] lists) {
+                    lists[0] = chunks;
+                }
+                """)).containsExactly("""
+                18:14 [indexedby.handover] lists is indexed by another column-index space than the value handed to it.
+                  found   : @IndexedBy(FileOrdinal.class)
+                  required: no @IndexedBy""");
+    }
+
+    @Test
+    void typeVariableIndex() {
+        assertThat(check("""
+                <X extends Integer> int column(X x, boolean first) {
+                    return projectedToOriginal[x] + projectedToOriginal[first ? x : 0];
+                }
+                """)).containsExactly("""
+                18:32 [subscript.space] index of the wrong column-index space for projectedToOriginal.
+                  found   : @ColumnIndexUnknown
+                  required: @OriginalIndex""",
+                """
+                18:63 [subscript.space] index of the wrong column-index space for projectedToOriginal.
+                  found   : @ColumnIndexUnknown
+                  required: @OriginalIndex""");
+    }
+
+    @Test
+    void uncheckedClassAcceptsAnySpace() {
+        JavaFileObject helper = source("Helper", """
+                import java.util.List;
+                class Helper {
+                    static String help(List<String> list, int i) {
+                        return list.get(i);
+                    }
+                }
+                """);
+        assertThat(check("""
+                String chunk(@FileOrdinal int f) {
+                    return Helper.help(chunks, f);
+                }
+                """, List.of("-AonlyDefs=^Read$"), helper)).isEmpty();
+    }
+
+    @Test
+    void skippedClassAcceptsAnySpace() {
+        JavaFileObject helper = source("Helper", """
+                import java.util.List;
+                class Helper {
+                    static String help(List<String> list, int i) {
+                        return list.get(i);
+                    }
+                }
+                """);
+        assertThat(check("""
+                String chunk(@FileOrdinal int f) {
+                    return Helper.help(chunks, f);
+                }
+                """, List.of("-AskipDefs=^Helper$"), helper)).isEmpty();
+    }
+
+    @Test
+    void localAndAnonymousClassesWithCode() {
+        assertThat(check("""
+                Object local(@OriginalIndex int original) {
+                    record Pair(int first, int second) {}
+                    class Reader {
+                        String read() {
+                            return chunks.get(original);
+                        }
+                    }
+                    return new Object() {
+                        final String chunk = chunks.get(original);
+                    };
+                }
+                """, List.of("-AonlyDefs=^Read$"))).containsExactly("""
+                19:5 [class.unchecked] the column-index checker skips the bodies of local and anonymous classes; move this code into a method or a member class""",
+                """
+                24:25 [class.unchecked] the column-index checker skips the bodies of local and anonymous classes; move this code into a method or a member class""");
+    }
+
+    @Test
+    void calleeCompiledFirstIsChecked() {
+        JavaFileObject helper = source("Helper", """
+                import java.util.List;
+                class Helper {
+                    static String help(List<String> list) {
+                        return list.get(0);
+                    }
+                }
+                """);
+        assertThat(check("""
+                String chunk() {
+                    return Helper.help(chunks);
+                }
+                """, List.of("-XDcompilePolicy=byTodo"), helper)).containsExactly("""
+                18:24 [indexedby.handover] list is indexed by another column-index space than the value handed to it.
+                  found   : @IndexedBy(FileOrdinal.class)
+                  required: no @IndexedBy""");
+    }
+
     private static List<String> check(String members) {
+        return check(members, List.of());
+    }
+
+    /// Compiles `members` as the body of class `Read`, after `extraSources`, passing
+    /// `checkerOptions` to the checker. Returns the errors reported in `Read`.
+    private static List<String> check(String members, List<String> checkerOptions,
+            JavaFileObject... extraSources) {
         JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
         DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
-        List<JavaFileObject> sources = List.of(source("Read", HEADER + members + "}\n"),
-                source("dev/hardwood/schema/FileSchema", FILE_SCHEMA));
-        List<String> options = List.of("-proc:only",
+        List<JavaFileObject> sources = new ArrayList<>(List.of(extraSources));
+        sources.add(source("Read", HEADER + members + "}\n"));
+        sources.add(source("dev/hardwood/schema/FileSchema", FILE_SCHEMA));
+        List<String> options = new ArrayList<>(List.of("-d", classes.toString(),
                 "-classpath", System.getProperty("java.class.path"),
-                "-processor", ColumnIndexChecker.class.getName());
+                "-processor", ColumnIndexChecker.class.getName()));
+        options.addAll(checkerOptions);
         compiler.getTask(null, null, diagnostics, options, null, sources).call();
 
         List<String> errors = new ArrayList<>();
@@ -444,7 +645,7 @@ class ColumnIndexCheckerTest {
     }
 
     private static JavaFileObject source(String path, String content) {
-        return new SimpleJavaFileObject(URI.create("string:///" + path + ".java"), JavaFileObject.Kind.SOURCE) {
+        return new SimpleJavaFileObject(URI.create("file:///" + path + ".java"), JavaFileObject.Kind.SOURCE) {
             @Override
             public CharSequence getCharContent(boolean ignoreEncodingErrors) {
                 return content;

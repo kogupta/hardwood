@@ -8,12 +8,17 @@
 package dev.hardwood.tools.columnindex;
 
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.regex.Pattern;
 
 import javax.lang.model.element.AnnotationMirror;
 import javax.lang.model.element.Element;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.Name;
+import javax.lang.model.element.NestingKind;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.TypeKind;
@@ -39,9 +44,11 @@ import com.sun.source.tree.MethodInvocationTree;
 import com.sun.source.tree.MethodTree;
 import com.sun.source.tree.NewClassTree;
 import com.sun.source.tree.ReturnTree;
+import com.sun.source.tree.SwitchExpressionTree;
 import com.sun.source.tree.Tree;
 import com.sun.source.tree.TypeCastTree;
 import com.sun.source.tree.VariableTree;
+import com.sun.source.util.TreeScanner;
 
 import dev.hardwood.tools.columnindex.qual.ColumnIndexUnknown;
 import dev.hardwood.tools.columnindex.qual.IndexedBy;
@@ -54,13 +61,14 @@ import dev.hardwood.tools.columnindex.qual.IndexedBy;
 ///   the named qualifier.
 /// - **Handovers.** An array, list or `FileSchema` assigned, passed or returned keeps its
 ///   [IndexedBy]: source and target must name the same space. A value without [IndexedBy] is in
-///   a space of its own. A freshly allocated array or object fits any target, except that a copy
+///   a space of its own. An array or object created with `new` fits any target, except that a copy
 ///   constructor such as `new ArrayList<>(chunks)` carries the space of its argument. Only
 ///   parameters of methods declared outside the checked classes accept any value.
 ///
-/// A container carries the space of its source when it is a copy or a view: `a.clone()`,
-/// `Arrays.copyOf(a, n)`, `Arrays.copyOfRange(a, from, to)`, `List.copyOf(l)` and
-/// `schema.getColumns()`. A conditional carries the spaces of both branches.
+/// A container carries the space of its source when it is a copy, a view or a cast: `a.clone()`,
+/// `Arrays.copyOf(a, n)`, `Arrays.copyOfRange(a, from, to)`, `List.copyOf(l)`, `l.toArray()`,
+/// `Collections.unmodifiableList(l)`, `Objects.requireNonNull(x)` and `schema.getColumns()`. A
+/// conditional or a `switch` expression carries the spaces of all its results.
 ///
 /// A cast into a space is an error rather than a warning, so every conversion point carries a
 /// visible suppression.
@@ -70,10 +78,26 @@ public final class ColumnIndexVisitor extends BaseTypeVisitor<ColumnIndexAnnotat
     private static final String FILE_SCHEMA = "dev.hardwood.schema.FileSchema";
 
     private final AnnotationMirror top;
+    private final Pattern skipDefs;
+    private final Pattern onlyDefs;
 
     public ColumnIndexVisitor(BaseTypeChecker checker) {
         super(checker);
         top = AnnotationBuilder.fromClass(elements, ColumnIndexUnknown.class);
+        // The defaults of SourceChecker: skipDefs matches no class, onlyDefs matches every class.
+        skipDefs = defsPattern("skipDefs", "\\]'\"\\]");
+        onlyDefs = defsPattern("onlyDefs", ".");
+    }
+
+    /// The pattern of the `skipDefs` or `onlyDefs` option, read from the same places, in the same
+    /// order, as `SourceChecker` reads it: the checker option, the system property
+    /// `checkers.<name>`, then the environment variable `<name>`.
+    private Pattern defsPattern(String name, String defaultPattern) {
+        String pattern = checker.hasOption(name) ? checker.getOption(name) : System.getProperty("checkers." + name);
+        if (pattern == null) {
+            pattern = System.getenv(name);
+        }
+        return Pattern.compile(pattern == null || pattern.isEmpty() ? defaultPattern : pattern);
     }
 
     @Override
@@ -108,9 +132,16 @@ public final class ColumnIndexVisitor extends BaseTypeVisitor<ColumnIndexAnnotat
 
     @Override
     public Void visitAssignment(AssignmentTree tree, Void p) {
-        Element target = TreeUtils.elementFromTree(tree.getVariable());
-        if (target != null && tree.getVariable().getKind() != Tree.Kind.ARRAY_ACCESS) {
-            checkHandover(tree.getExpression(), target, space(target), tree);
+        ExpressionTree variable = tree.getVariable();
+        if (variable instanceof ArrayAccessTree element) {
+            // An array element carries no space of its own.
+            checkHandover(tree.getExpression(), TreeUtils.typeOf(variable), NONE, element.getExpression(), tree);
+        }
+        else {
+            Element target = TreeUtils.elementFromTree(variable);
+            if (target != null) {
+                checkHandover(tree.getExpression(), target, space(target), tree);
+            }
         }
         return super.visitAssignment(tree, p);
     }
@@ -125,6 +156,49 @@ public final class ColumnIndexVisitor extends BaseTypeVisitor<ColumnIndexAnnotat
             }
         }
         return super.visitVariable(tree, p);
+    }
+
+    @Override
+    public void processClassTree(ClassTree tree) {
+        for (Tree member : tree.getMembers()) {
+            if (!(member instanceof ClassTree)) {
+                reportSkippedClasses(member);
+            }
+        }
+        super.processClassTree(tree);
+    }
+
+    /// Reports each local or anonymous class in `tree` whose code the checker does not check.
+    /// `-AonlyDefs` matches qualified names, which local and anonymous classes do not have, so
+    /// their bodies would otherwise go unchecked without notice.
+    private void reportSkippedClasses(Tree tree) {
+        new TreeScanner<Void, Void>() {
+            @Override
+            public Void visitClass(ClassTree nested, Void p) {
+                if (checker.shouldSkipDefs(nested) && hasCode(nested)) {
+                    checker.reportError(nested, "class.unchecked");
+                }
+                return null;
+            }
+        }.scan(tree, null);
+    }
+
+    /// Whether `tree` declares code beyond what the compiler generates for it.
+    private static boolean hasCode(ClassTree tree) {
+        for (Tree member : tree.getMembers()) {
+            boolean code = switch (member) {
+                case MethodTree method -> method.getBody() != null && !TreeUtils.isAutoGeneratedRecordMember(method)
+                        && !TreeUtils.isAnonymousConstructor(method);
+                case VariableTree field -> field.getInitializer() != null
+                        && !TreeUtils.isAutoGeneratedRecordMember(field);
+                case ClassTree nested -> hasCode(nested);
+                default -> true;
+            };
+            if (code) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override
@@ -193,20 +267,41 @@ public final class ColumnIndexVisitor extends BaseTypeVisitor<ColumnIndexAnnotat
         }
     }
 
-    /// Whether `element` is declared in a class this compilation checks.
+    /// Whether `element` is declared in a class this compilation checks. A local or anonymous class
+    /// counts as part of the named class around it.
+    ///
+    /// The answer depends on the class symbol only. When javac compiles one class at a time, the
+    /// tree of another class may not be attributed yet, or may already be lowered to bytecode
+    /// form; `SourceChecker.shouldSkipDefs(ClassTree)` needs an attributed tree, so this method
+    /// matches `skipDefs` and `onlyDefs` against the same name itself.
     private boolean isChecked(Element element) {
         TypeElement type = ElementUtils.enclosingTypeElement(element);
-        Tree declaration = type == null ? null : atypeFactory.declarationFromElement(type);
-        return declaration instanceof ClassTree classTree && !checker.shouldSkipDefs(classTree);
+        while (type != null && (type.getNestingKind() == NestingKind.LOCAL
+                || type.getNestingKind() == NestingKind.ANONYMOUS)) {
+            type = ElementUtils.enclosingTypeElement(type.getEnclosingElement());
+        }
+        if (type == null || !ElementUtils.isElementFromSourceCode(type)) {
+            return false;
+        }
+        String name = type.asType().toString();
+        return !skipDefs.matcher(name).find() && onlyDefs.matcher(name).find();
     }
 
     private void checkHandover(ExpressionTree source, Element target, String required, Tree reportAt) {
-        if (!isContainer(target.getKind().isExecutable()
-                ? ((ExecutableElement) target).getReturnType() : target.asType())) {
+        TypeMirror targetType = target.getKind().isExecutable()
+                ? ((ExecutableElement) target).getReturnType() : target.asType();
+        checkHandover(source, targetType, required, target, reportAt);
+    }
+
+    /// Checks a container handed to a target of `required` space. A container widened to a type
+    /// that is not a container, such as `Object` or `Iterable`, is still checked: the target has
+    /// no [IndexedBy] and the container's space would be lost.
+    private void checkHandover(ExpressionTree source, TypeMirror targetType, String required, Object target,
+            Tree reportAt) {
+        if (!isContainer(targetType) && !isContainer(TreeUtils.typeOf(source))) {
             return;
         }
-        for (ExpressionTree origin : origins(source)) {
-            String found = space(origin);
+        for (String found : spaces(origins(source))) {
             if (!found.equals(required)) {
                 checker.reportError(reportAt, "indexedby.handover", display(found), display(required),
                         target);
@@ -214,9 +309,18 @@ public final class ColumnIndexVisitor extends BaseTypeVisitor<ColumnIndexAnnotat
         }
     }
 
+    /// The distinct spaces of `origins`, in order.
+    private Set<String> spaces(List<ExpressionTree> origins) {
+        Set<String> spaces = new LinkedHashSet<>();
+        for (ExpressionTree origin : origins) {
+            spaces.add(space(origin));
+        }
+        return spaces;
+    }
+
     /// The expressions whose [IndexedBy] the container `value` carries. A freshly allocated
-    /// container carries none; a copy or view carries its source's; a conditional carries both
-    /// branches'.
+    /// container carries none; a copy, view or cast carries its source's; a conditional carries
+    /// both branches'.
     private List<ExpressionTree> origins(ExpressionTree value) {
         List<ExpressionTree> origins = new ArrayList<>();
         collectOrigins(value, origins);
@@ -233,6 +337,13 @@ public final class ColumnIndexVisitor extends BaseTypeVisitor<ColumnIndexAnnotat
                 collectOrigins(conditional.getTrueExpression(), origins);
                 collectOrigins(conditional.getFalseExpression(), origins);
             }
+            case SWITCH_EXPRESSION -> {
+                for (ExpressionTree result : ColumnIndexAnnotatedTypeFactory.switchResults(
+                        (SwitchExpressionTree) value)) {
+                    collectOrigins(result, origins);
+                }
+            }
+            case TYPE_CAST -> collectOrigins(((TypeCastTree) value).getExpression(), origins);
             case NEW_CLASS -> {
                 for (ExpressionTree argument : ((NewClassTree) value).getArguments()) {
                     if (isContainer(TreeUtils.typeOf(argument))) {
@@ -262,8 +373,13 @@ public final class ColumnIndexVisitor extends BaseTypeVisitor<ColumnIndexAnnotat
             case "clone" -> receiver != null && TreeUtils.typeOf(receiver).getKind() == TypeKind.ARRAY
                     ? receiver : null;
             case "getColumns" -> receiver != null && isMemberOf(method, FILE_SCHEMA) ? receiver : null;
+            case "toArray" -> receiver != null && isMemberOf(method, "java.util.List") ? receiver : null;
             case "copyOf", "copyOfRange" -> !arguments.isEmpty()
                     && (isMemberOf(method, "java.util.Arrays") || isMemberOf(method, "java.util.List"))
+                    ? arguments.get(0) : null;
+            case "unmodifiableList" -> !arguments.isEmpty() && isMemberOf(method, "java.util.Collections")
+                    ? arguments.get(0) : null;
+            case "requireNonNull" -> !arguments.isEmpty() && isMemberOf(method, "java.util.Objects")
                     ? arguments.get(0) : null;
             default -> null;
         };
@@ -334,8 +450,12 @@ public final class ColumnIndexVisitor extends BaseTypeVisitor<ColumnIndexAnnotat
     }
 
     private void checkSubscript(ExpressionTree container, ExpressionTree index) {
+        Set<String> checked = new HashSet<>();
         for (ExpressionTree origin : origins(container)) {
             String space = space(origin);
+            if (!checked.add(space)) {
+                continue;
+            }
             if (space.equals(NONE)) {
                 continue;
             }
@@ -348,7 +468,7 @@ public final class ColumnIndexVisitor extends BaseTypeVisitor<ColumnIndexAnnotat
                 }
                 continue;
             }
-            AnnotationMirror found = atypeFactory.getAnnotatedType(index).getPrimaryAnnotationInHierarchy(top);
+            AnnotationMirror found = atypeFactory.getAnnotatedType(index).getAnnotationInHierarchy(top);
             if (found == null) {
                 throw new BugInCF("no column-index qualifier on subscript %s", index);
             }

@@ -87,7 +87,7 @@ The two profiles configure the same compilation, so they are exclusive: an enfor
 | `@ColumnIndexUnknown` | Every unannotated `int`. The top of the hierarchy. |
 | `@ColumnIndexBottom` | A literal, or an expression of literals and operators such as `-1`. The bottom of the hierarchy: it fits every space. |
 
-A qualifier on a parameter, field or return value states its space. A local variable takes the space of the value assigned to it. A variable that holds only a literal reads as its declared type, whether it is a local, a parameter, a field or a named constant; so do `i++` and `--i`. A loop counter therefore states its space in its declaration, as in `for (@ProjectedIndex int p = 0; p < count; p++)`. An unannotated counter or constant belongs to no space and is rejected wherever one is required. A conditional `c ? a : b` reads as the least upper bound of its branches.
+A qualifier on a parameter, field or return value states its space. A local variable takes the space of the value assigned to it. A variable that holds only a literal reads as its declared type, whether it is a local, a parameter, a field or a named constant; so do `i++` and `--i`. A loop counter therefore states its space in its declaration, as in `for (@ProjectedIndex int p = 0; p < count; p++)`. An unannotated counter or constant belongs to no space and is rejected wherever one is required. A conditional `c ? a : b` or a `switch` expression reads as the least upper bound of its results.
 
 ### Subscripts
 
@@ -99,15 +99,17 @@ Which space indexes a `FileSchema` or a `RowGroup.columns()` list depends on whi
 
 `column-index.astub`, bundled with the checker, marks `RowGroup.columns()` as `@IndexedBy(FileOrdinal.class)`. An `@IndexedBy` naming a class that is not one of the four spaces is an error at its declaration.
 
-An array, list or schema keeps its `@IndexedBy` when it is assigned to a variable or field, passed to a parameter, or returned: source and target must name the same space, and a missing `@IndexedBy` on either side counts as a space of its own. A parameter of a method declared outside the checked set accepts any array, list or schema, since the checker does not check that method's body. A freshly allocated array or object fits any target; so do the elements of a varargs call, which form a fresh array.
+An array, list or schema keeps its `@IndexedBy` when it is assigned to a variable, field or array element, passed to a parameter, or returned: source and target must name the same space, and a missing `@IndexedBy` on either side counts as a space of its own. An array element has no `@IndexedBy`, and neither has a target whose type is not an array, list or schema, such as `Object` or `Iterable`; handing a container of a space to one is an error. A parameter of a method declared outside the checked set accepts any array, list or schema, since the checker does not check that method's body. An array or object created with `new` fits any target; so do the elements of a varargs call, which form a new array. A value returned by a factory method, such as `List.of()`, has no `@IndexedBy`.
 
 A copy or a view carries the space of its source:
 
 - `a.clone()`, `Arrays.copyOf(a, n)`, `Arrays.copyOfRange(a, from, to)` and `List.copyOf(l)`;
 - a constructor given an array or list, such as `new ArrayList<>(chunks)`;
-- `schema.getColumns()`, whose positions are those of `schema.getColumn(int)`.
+- `schema.getColumns()`, whose positions are those of `schema.getColumn(int)`;
+- `l.toArray()`, `Collections.unmodifiableList(l)` and `Objects.requireNonNull(x)`;
+- a cast, such as `(List<String>) iterable`.
 
-The container a subscript reads from is resolved the same way, so `schema.getColumns().get(i)` needs the index space of `schema`. A conditional carries the spaces of both branches, and each branch must fit.
+`subList` and `reversed` return lists whose positions differ from those of their source, so they carry no space. The container a subscript reads from is resolved the same way as a handover, so `schema.getColumns().get(i)` needs the index space of `schema`. A conditional or a `switch` expression carries the spaces of all its results, and each must fit.
 
 ### Conversion points
 
@@ -120,7 +122,7 @@ A value enters a space at a conversion point: a method or local variable that ha
 
 `asReference` and `identity` hold only for the file at index 0. The checker does not see the `fileIndex == 0` test that selects them; `CrossFileColumnOrderTest` covers it at run time.
 
-A qualifier on a loop counter or a named constant is a conversion point without a suppression: the checker takes the declaration as given and does not relate it to the loop's bound. Where the loop body also uses the counter in its true space, such as `plans[projCol]` or `toOriginalIndex(p)`, a wrong declaration fails there.
+A qualifier on the counter of a basic `for` loop or on a named constant is a conversion point without a suppression: the checker takes the declaration as given and does not relate it to the loop's bound. The counter of an enhanced `for` takes the type of the elements it iterates, so `for (@ProjectedIndex int p : positions)` compiles only if `positions` is a `@ProjectedIndex int[]`. Where the loop body also uses the counter in its true space, such as `plans[projCol]` or `toOriginalIndex(p)`, a wrong declaration fails there.
 
 The qualifier is also lost, and needs a conversion point, where the value passes through:
 
@@ -132,8 +134,12 @@ The qualifier is also lost, and needs a conversion point, where the value passes
 
 The checker catches a mix-up of indices only in the checked set. A qualified parameter outside it binds only the callers inside it, as Rule 5 states. The filter path (`PageFilterEvaluator`, `RowGroupFilterEvaluator`, `MinMaxStats` and the column index of a `ResolvedPredicate` leaf) is outside the set, so passing reference ordinals where the filter needs file ordinals is not caught there.
 
-A literal written in place, such as the `0` in `list.get(0)` or a `-1` sentinel, fits every space.
+A literal written in place, such as the `0` in `list.get(0)` or a `-1` sentinel, fits every space. A position computed from the size of a container, such as `list.size() - 1`, belongs to no space and needs a conversion point.
 
-Only an `int` argument of the methods listed under Subscripts is checked. A position reached another way is not: `list.stream().skip(n)`, `ListIterator.nextIndex()`, a method reference such as `chunks::get`. Containers other than arrays, `List` and `FileSchema` carry no space, such as a `BitSet` of columns or a `Map` keyed by column index. A container returned from a lambda or a method reference, such as `() -> chunks` passed as a `Supplier`, loses its space.
+Only an `int` argument of the methods listed under Subscripts is checked. A position reached another way is not: `list.stream().skip(n)`, `ListIterator.nextIndex()`, a method reference such as `chunks::get`. Containers other than arrays, `List` and `FileSchema` carry no space, such as a `BitSet` of columns or a `Map` keyed by column index. A container returned from a lambda or a method reference, such as `() -> chunks` passed as a `Supplier`, loses its space. So does a container kept in another holder or passed through a method not listed above: an `Optional`, a `List<List<…>>`, a `Map` value, `List.of(chunks)` or a generic helper method.
+
+`@IndexedBy` names one space, so a method that takes a container of any space cannot be declared in the checked set; it belongs outside the set, or has one variant per space.
+
+The checker skips the bodies of local and anonymous classes. In a checked class, such a class is an error (`class.unchecked`) if it has code: a method body, a field initializer or an initializer block. A local record or interface without code is allowed. Code moved into a method or a member class is checked.
 
 Stub annotations do not apply to the accessors of records nested in another type, such as `SchemaNode.PrimitiveNode`; they do apply to top-level records and to nested classes. The conversion points above cover the nested records.
