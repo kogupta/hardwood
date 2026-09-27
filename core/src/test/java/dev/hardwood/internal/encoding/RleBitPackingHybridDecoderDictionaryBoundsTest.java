@@ -9,8 +9,9 @@ package dev.hardwood.internal.encoding;
 
 import java.io.ByteArrayOutputStream;
 
-import dev.hardwood.reader.ParquetReadException;
 import org.junit.jupiter.api.Test;
+
+import dev.hardwood.reader.ParquetReadException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowable;

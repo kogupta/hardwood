@@ -1,6 +1,6 @@
 # Checker Framework Spike
 
-**Status: In progress**
+**Status: Completed**
 
 Feasibility spike for the Checker Framework's Index Checker (Constant Value
 Checker included as its subchecker) over `hardwood-core`, per
@@ -179,7 +179,50 @@ the spike: `prefixLengths[currentIndex]` bounds against `totalValues`,
 `initialize` — again parallel-array relations outside the guarded invariants.
 No annotations were needed in either file.
 
-## Remaining spike stages
+## Full-build verification
 
-Guard stages (dictionary indices, DELTA byte-array lengths/prefixes) and the
-verdict are recorded here as they complete.
+`mvn verify` on the default build (Error Prone active, no Checker Framework)
+passes every JVM unit test (1,042, 0 failures) and the parquet-java
+compatibility runner. The only failures are the S3 integration tests, which
+error before running: Testcontainers reports "Could not find a valid Docker
+environment" and this machine has no Docker daemon at all
+(`docker.service` not found). The failure is environmental and predates the
+spike's changes; the touched code (`internal/encoding`) is covered by the
+unit suites and the compatibility runner above. A environment with Docker
+should re-run `mvn verify` before merge.
+
+## Verdict
+
+**Adopt the Checker Framework as an opt-in CI instrument, and proceed with
+the prior adoption note's pilot classes before any wholesale gating.** The
+spike's evidence:
+
+- The guard stages delivered three controlled-exception fixes (dictionary
+  indices, DELTA lengths, DELTA prefixes) for crash classes reachable from
+  malformed files, and the checker then proved every guarded access — with
+  **zero annotations** in all three decoder classes. That is exactly the
+  annotation-locality and idiomatic-simplicity character the prior note's
+  exit criteria (§18C/D, §20) demand.
+- Coexistence with Error Prone is free (identical wall clock and warning
+  count in the combined run; both visible in one javac invocation).
+- The cost profile is acceptable only CI-side: 8-14x compile overhead, three
+  classes skipped over the upstream `BINDING_VARIABLE` crash, and a
+  diagnostics inventory where the largest mass (parallel-array relations in
+  the reader/batch layer, ~2:1 over the decode layer) is inexpressible
+  without `@SameLen`/`@IndexFor` propagation through caller contracts — the
+  shape §20 says to decline.
+
+Accordingly: gate nothing wholesale yet. The follow-up sequence the verdict
+names (each its own issue, out of scope here):
+
+1. Prior note's Error Prone baseline + `NoUnsafeIntegralNarrowing` check
+   (its §14-15) — cheap, immediate.
+2. Prior note's CF pilots on `ProjectedSchema`/`ColumnBatch`/
+   `RecordShredder`/`NestedBatchIndex` (its §5-8), with method-level
+   `@IndexFor`/`@IndexOrLow` contracts at access sites — the element-wise
+   array annotation its §5 sketches is inexpressible and should not be
+   planned around.
+3. Upstream the `ElementAnnotationApplier` binding-variable crash
+   (typetools/checker-framework), then lift this profile's `-AskipDefs`.
+4. A CI job running `-Pcheckerframework` warnings-only on `core`, trended
+   against the 2,812 baseline recorded here.
