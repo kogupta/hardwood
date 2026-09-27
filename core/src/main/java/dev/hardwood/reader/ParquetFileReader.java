@@ -763,24 +763,23 @@ public class ParquetFileReader implements Closeable {
     }
 
     /// Evaluate a [RowGroupPredicate] against one row group.
-    // The Value Checker gives the switch one `yield`'s constant as its type and then rejects
-    // the other `yield`: a false positive with no index fact behind it.
-    @SuppressWarnings("value")
     private static boolean matches(RowGroup rg, RowGroupPredicate p) {
         return switch (p) {
             case RowGroupPredicate.ByteRange b -> {
                 long mid = rowGroupMidpoint(rg);
                 yield mid >= b.startInclusive() && mid < b.endExclusive();
             }
-            case RowGroupPredicate.And a -> {
-                for (RowGroupPredicate child : a.children()) {
-                    if (!matches(rg, child)) {
-                        yield false;
-                    }
-                }
-                yield true;
-            }
+            case RowGroupPredicate.And a -> matchesAll(rg, a.children());
         };
+    }
+
+    private static boolean matchesAll(RowGroup rg, List<RowGroupPredicate> children) {
+        for (RowGroupPredicate child : children) {
+            if (!matches(rg, child)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static long rowGroupMidpoint(RowGroup rg) {

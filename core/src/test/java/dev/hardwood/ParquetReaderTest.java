@@ -593,7 +593,19 @@ class ParquetReaderTest {
 
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
             assertThatThrownBy(() -> reader.buildRowReader().skip(-1).build())
-                    .isInstanceOf(IllegalArgumentException.class);
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("skip must be non-negative: -1");
+        }
+    }
+
+    @Test
+    void tailRejectsNonPositive() throws Exception {
+        Path parquetFile = Paths.get("src/test/resources/filter_pushdown_int.parquet");
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
+            assertThatThrownBy(() -> reader.buildRowReader().tail(0).build())
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("tail row count must be positive: 0");
         }
     }
 

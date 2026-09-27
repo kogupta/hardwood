@@ -248,6 +248,14 @@ public class RowGroupIterator implements Closeable {
                              Consumer<RowGroupIterator> closeListener,
                              HardwoodContextImpl context, long maxRows, @NonNegative long tailSkip,
                              @NonNegative long physicalSkip) {
+        // This class is outside the Index Checker's set, so a caller here is not held to
+        // the @NonNegative above.
+        if (tailSkip < 0) {
+            throw new IllegalArgumentException("tailSkip must be non-negative, got " + tailSkip);
+        }
+        if (physicalSkip < 0) {
+            throw new IllegalArgumentException("physicalSkip must be non-negative, got " + physicalSkip);
+        }
         if (tailSkip > 0 && physicalSkip > 0) {
             throw new IllegalArgumentException(
                     "tailSkip and physicalSkip are mutually exclusive, got tailSkip=" + tailSkip
@@ -512,6 +520,9 @@ public class RowGroupIterator implements Closeable {
     ///         computed for the first work item, since changing the tail
     ///         skip after the fact would yield inconsistent plans.
     public void setTailSkip(@NonNegative long tailSkip) {
+        if (tailSkip < 0) {
+            throw new IllegalArgumentException("tailSkip must be non-negative, got " + tailSkip);
+        }
         if (!fetchPlanCache.isEmpty()) {
             throw new IllegalStateException(
                     "setTailSkip must be called before any column requests its fetch plan");
