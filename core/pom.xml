@@ -67,6 +67,18 @@
       <scope>test</scope>
     </dependency>
 
+    <!-- Checker Framework qualifiers (annotations only, no code). Provided: compile-time
+         only, never packaged; optional: never transitive. Declared outside the
+         checkerframework profile so the pilot classes' annotations resolve on the
+         default build too. -->
+    <dependency>
+      <groupId>org.checkerframework</groupId>
+      <artifactId>checker-qual</artifactId>
+      <version>${checker-framework.version}</version>
+      <scope>provided</scope>
+      <optional>true</optional>
+    </dependency>
+
     <!-- Test dependencies -->
     <dependency>
       <groupId>org.junit.jupiter</groupId>
@@ -230,18 +242,6 @@
          activation: -Pcheckerframework. -->
     <profile>
       <id>checkerframework</id>
-      <!-- The checker resolves its annotated-JDK annotations (e.g. dataflow's
-           @Deterministic, which lives in checker-qual) through the compilation
-           classpath; the processor path alone does not feed that lookup on
-           current JDKs. Provided scope: compile-time only, never packaged. -->
-      <dependencies>
-        <dependency>
-          <groupId>org.checkerframework</groupId>
-          <artifactId>checker-qual</artifactId>
-          <version>${checker-framework.version}</version>
-          <scope>provided</scope>
-        </dependency>
-      </dependencies>
       <build>
         <plugins>
           <plugin>

@@ -204,6 +204,81 @@ Three conclusions:
    Value checker proves the bound once the value is typed — which is exactly
    the boundary-annotation model this doc proposes.
 
+## Experiment 2 — pilot classes annotated (done, 2026-09-27)
+
+The four pilot classes are annotated per the prior note's sketches (~58
+qualifier annotations, no checker logic changed):
+
+- `NestedBatchIndex` — the eight outer arrays are one
+  `@SameLen("valueCounts")` family; every accessor takes
+  `@IndexFor("valueCounts") int projectedCol`; the `-1` sentinel accessor takes
+  `@IndexOrLow` and its `projectedCol < 0` guard refines it. Anchored on
+  `valueCounts` because `columnSchemas` is legitimately null in one call path —
+  the annotation forced that contract into the open, where the old code
+  silently relied on it.
+- `ColumnBatch` — `checkedIndex` now returns `@IndexFor("sources") int`; the
+  whole private chain (store, requireAllNull, validate*, describe) requires
+  that type. Zero new runtime checks: the existing check became the producer
+  of the typed value. `ranges`/`validities` joined the SameLen family.
+- `RecordShredder` — per-column arrays form a `@SameLen("layers")` family;
+  `bind`'s arrays are `@SameLen` parameters with one boundary length check;
+  `shred`/`leafRange`/`phantomLayers` take `@IndexFor("layers")`.
+- `ProjectedSchema` — the mapping invariant is expressed: elements of
+  `projectedToOriginal` are `@IndexFor("originalToProjected")`, elements of
+  `originalToProjected` are `@IndexOrLow("projectedToOriginal")`, and the
+  accessors carry those types — so using `toProjectedIndex(...)` as an index
+  without a `>= 0` refinement is now a compile-time warning.
+
+Three boundary checks were *added* (NestedBatchIndex schema count, ColumnBatch
+constructor ranges count, RecordShredder bind lengths) — each closing an
+ArrayIndexOutOfBounds path that today surfaces at access time. The premise's
+direction held: boundary gains checks, internals gain types. `checker-qual`
+moved to a project-level `provided`+`optional` dependency so annotations
+compile without the profile (revising the spike's recorded deviation).
+
+Clean `core` compile under the profile, before → after (Maven-format
+`[WARNING] file:[line,col] [key]` count):
+
+| File | Before | After |
+| --- | --- | --- |
+| NestedBatchIndex | 67 | 44 |
+| ColumnBatch | 16 | 6 |
+| RecordShredder | 53 | 48 |
+| ProjectedSchema | 21 | 35 |
+| **Pilot total** | **157** | **133** |
+| PqMapImpl | 51 | 128 |
+| PqListImpl | 15 | 78 |
+| PqStructImpl | 24 | 63 |
+| NestedBatchDataView | 161 | 192 |
+| VariantShredReassembler | 68 | 90 |
+| Pq{Int,Long,Double}ListImpl | 21 each | 33 each |
+| **Whole module** | **2,928** | **3,190** |
+
+Findings:
+
+1. **The SameLen family works and is cheap.** Eight arrays tied to one anchor
+   with one constructor check took NestedBatchIndex down 23 warnings; every
+   accessor that indexes a projected column is now proven.
+2. **Proof obligations are conserved, not destroyed.** The −38 in the pilots
+   became +~300 in their callers — dominated by the flyweight cursor layer
+   (PqListImpl/PqMapImpl/PqStructImpl, +179) that consumes the accessors. This
+   is the precise cost of the prior note's stop condition: the outer
+   projected-column dimension typed for free, but the inner record/level/item
+   dimensions now demand typing in the cursors, which is where the remaining
+   work is. The reader/batch layer's 2:1 warning concentration is now
+   explained concretely: it is one untyped dependency chain.
+3. **A connected subgraph must be typed together.** Annotating boundary
+   classes alone raises the total warning count; the count falls only once the
+   caller chain is typed too. Any adoption plan must scope by call graph, not
+   by file.
+4. **ProjectedSchema's mapping invariant is only partially expressible** (+14
+   self): the constructor sites build the mapping arrays element-wise and the
+   checker cannot prove the array→array element domain there — the same
+   element-wise gap experiment 1's dictionary path hit. Declarative array
+   mapping qualifiers are the missing feature class.
+5. **Compile overhead unchanged** (188–193 s warm under the profile; the
+   default build is untouched).
+
 ## Costs, honestly
 
 - 8–14× compile overhead on `core` under the profile (opt-in; default builds

@@ -15,6 +15,9 @@ import java.util.List;
 import java.util.Set;
 import java.util.function.IntPredicate;
 
+import org.checkerframework.checker.index.qual.IndexFor;
+import org.checkerframework.checker.index.qual.IndexOrLow;
+
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
@@ -32,8 +35,13 @@ import dev.hardwood.schema.SchemaNode;
 public final class ProjectedSchema {
 
     private final FileSchema originalSchema;
-    private final int[] projectedToOriginal;   // projected index -> original index
-    private final int[] originalToProjected;   // original index -> projected index (-1 if not projected)
+    /// The mapping in the type system: every element of `projectedToOriginal` is a valid
+    /// index into `originalToProjected`, and every element of `originalToProjected` is a
+    /// valid index into `projectedToOriginal` or the `-1` sentinel. The accessors below
+    /// make callers see exactly that: a value read from `toProjectedIndex` cannot be used
+    /// to index a projected array until a `>= 0` check refines it.
+    private final int @IndexFor("originalToProjected") [] projectedToOriginal;   // projected index -> original index
+    private final int @IndexOrLow("projectedToOriginal") [] originalToProjected; // original index -> projected index (-1 if not projected)
     private final List<ColumnSchema> projectedColumns;
     private final int[] projectedFieldIndices; // indices of projected top-level fields in root children
     /// How many leading projected columns a reader exposes. Equal to the projected column
@@ -44,15 +52,17 @@ public final class ProjectedSchema {
     /// counterpart of [#exposedColumnCount].
     private final int exposedFieldCount;
 
-    private ProjectedSchema(FileSchema originalSchema, int[] projectedToOriginal,
-                            int[] originalToProjected, List<ColumnSchema> projectedColumns,
+    private ProjectedSchema(FileSchema originalSchema,
+                            int @IndexFor("originalToProjected") [] projectedToOriginal,
+                            int @IndexOrLow("projectedToOriginal") [] originalToProjected, List<ColumnSchema> projectedColumns,
                             int[] projectedFieldIndices) {
         this(originalSchema, projectedToOriginal, originalToProjected, projectedColumns, projectedFieldIndices,
                 projectedToOriginal.length, projectedFieldIndices.length);
     }
 
-    private ProjectedSchema(FileSchema originalSchema, int[] projectedToOriginal,
-                            int[] originalToProjected, List<ColumnSchema> projectedColumns,
+    private ProjectedSchema(FileSchema originalSchema,
+                            int @IndexFor("originalToProjected") [] projectedToOriginal,
+                            int @IndexOrLow("projectedToOriginal") [] originalToProjected, List<ColumnSchema> projectedColumns,
                             int[] projectedFieldIndices, int exposedColumnCount, int exposedFieldCount) {
         this.originalSchema = originalSchema;
         this.projectedToOriginal = projectedToOriginal;
@@ -407,15 +417,17 @@ public final class ProjectedSchema {
     /// @param projectedIndex the index in the projected schema (0-based)
     /// @return the corresponding index in the original schema
     /// @throws IndexOutOfBoundsException if projectedIndex is out of range
-    public int toOriginalIndex(int projectedIndex) {
+    public @IndexFor("originalToProjected") int toOriginalIndex(@IndexFor("projectedToOriginal") int projectedIndex) {
         return projectedToOriginal[projectedIndex];
     }
 
     /// Converts an original column index to the projected column index.
     ///
     /// @param originalIndex the index in the original schema
-    /// @return the corresponding index in the projected schema, or -1 if not projected
-    public int toProjectedIndex(int originalIndex) {
+    /// @return the corresponding index in the projected schema, or -1 if not projected;
+    ///         `@IndexOrLow("projectedToOriginal")`, so a caller must refine with a
+    ///         `>= 0` check before using the result as a projected-column index
+    public @IndexOrLow("projectedToOriginal") int toProjectedIndex(int originalIndex) {
         if (originalIndex < 0 || originalIndex >= originalToProjected.length) {
             return -1;
         }

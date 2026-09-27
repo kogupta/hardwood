@@ -11,6 +11,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+import org.checkerframework.checker.index.qual.IndexFor;
+import org.checkerframework.checker.index.qual.SameLen;
+
 import dev.hardwood.Validity;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.schema.ColumnSchema;
@@ -109,22 +112,25 @@ public final class RecordShredder {
         }
     }
 
+    /// Every per-column array is sized from the same column count, so the
+    /// `@SameLen("layers")` family makes one `columnIndex` valid across all of
+    /// them; `bind` re-establishes it for the per-batch arrays at its boundary.
     private final Layer[][] layers;
 
     /// Every layer once, in no particular order, so a bind resolves each one's batch inputs a
     /// single time however many leaves sit beneath it.
     private final Layer[] distinctLayers;
-    private final boolean[] leafOptional;
-    private final int[] maxDef;
-    private final int[] maxRep;
-    private final String[] columnNames;
+    private final boolean @SameLen("layers") [] leafOptional;
+    private final int @SameLen("layers") [] maxDef;
+    private final int @SameLen("layers") [] maxRep;
+    private final String @SameLen("layers") [] columnNames;
 
     // Per-batch binding.
-    private Validity[] leafValidities;
+    private Validity @SameLen("layers") [] leafValidities;
     private Map<String, Validity> structValidities;
     private Map<String, Validity> listValidities;
     private Map<String, int[]> listOffsets;
-    private ColumnSource[] sources;
+    private ColumnSource @SameLen("layers") [] sources;
     private int recordCount;
 
     /// @param schema the file schema
@@ -198,9 +204,14 @@ public final class RecordShredder {
 
     /// Binds the shredder to one batch's inputs, validates them, and derives the record
     /// count. Each column's value window is reset to the batch's source.
-    public void bind(ColumnSource[] sources, Validity[] leafValidities,
+    public void bind(ColumnSource @SameLen("layers") [] sources, Validity @SameLen("layers") [] leafValidities,
                      Map<String, Validity> structValidities, Map<String, Validity> listValidities,
                      Map<String, int[]> listOffsets) {
+        if (sources.length != layers.length || leafValidities.length != layers.length) {
+            throw new IllegalArgumentException("Batch binds " + sources.length + " sources and "
+                    + leafValidities.length + " leaf validities against a shredder built for "
+                    + layers.length + " columns");
+        }
         this.sources = sources;
         this.leafValidities = leafValidities;
         this.structValidities = structValidities;
@@ -228,7 +239,7 @@ public final class RecordShredder {
     /// Offsets are cumulative, so a record range's leaf range is had by composing one array
     /// lookup per repeated layer rather than by walking the records. Packed rather than returned
     /// as a pair because the writer asks this of every column before every slice it appends.
-    public long leafRange(int columnIndex, int from, int count) {
+    public long leafRange(@IndexFor("layers") int columnIndex, int from, int count) {
         int slotFrom = from;
         int slotTo = from + count;
         for (Layer layer : layers[columnIndex]) {
@@ -244,7 +255,7 @@ public final class RecordShredder {
     /// How many entries beyond its leaf slots one record can add to a column: one for every layer
     /// that can stand in for absent content — a null struct, a null list, an empty list — each of
     /// which emits an entry carrying no value.
-    public int phantomLayers(int columnIndex) {
+    public int phantomLayers(@IndexFor("layers") int columnIndex) {
         int phantoms = 0;
         for (Layer layer : layers[columnIndex]) {
             if (layer.kind() == Layer.Kind.REPEATED || layer.nullable()) {
@@ -254,7 +265,7 @@ public final class RecordShredder {
         return phantoms;
     }
 
-    public void shred(int columnIndex, int from, int count, LevelSink sink) {
+    public void shred(@IndexFor("layers") int columnIndex, int from, int count, LevelSink sink) {
         Ctx ctx = new Ctx(columnIndex, layers[columnIndex], maxDef[columnIndex], sink);
         int end = from + count;
         for (int r = from; r < end; r++) {

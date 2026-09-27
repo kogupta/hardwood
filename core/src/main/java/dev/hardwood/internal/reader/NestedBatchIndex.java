@@ -7,6 +7,11 @@
  */
 package dev.hardwood.internal.reader;
 
+import org.checkerframework.checker.index.qual.IndexFor;
+import org.checkerframework.checker.index.qual.IndexOrLow;
+import org.checkerframework.checker.index.qual.SameLen;
+import org.checkerframework.checker.nullness.qual.Nullable;
+
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.metadata.LogicalType;
@@ -21,12 +26,17 @@ import dev.hardwood.schema.SchemaNode;
 /// navigate directly over column data without per-row tree assembly.
 final class NestedBatchIndex {
 
-    final Object[] valueArrays;    // [projectedCol] -> typed value array (int[], long[], etc.)
-    final int[][] defLevels;       // [projectedCol] -> definition levels
-    final ColumnSchema[] columnSchemas; // [projectedCol] -> column schema
-    final int[] valueCounts;       // [projectedCol] -> number of values
-    final int[] recordCounts;      // [projectedCol] -> number of records
-    final int[][] offsets;         // [projectedCol] -> record-level offsets
+    /// The outer arrays are one `@SameLen("valueCounts")` family: every
+    /// projected-column index is valid for all of them, which
+    /// [NestedBatchIndex#buildFromBatches] establishes with a length check at
+    /// the construction boundary. The inner (jagged) dimensions stay
+    /// runtime-validated construction invariants.
+    final Object @SameLen("valueCounts") [] valueArrays;    // [projectedCol] -> typed value array (int[], long[], etc.)
+    final int @SameLen("valueCounts") [][] defLevels;       // [projectedCol] -> definition levels
+    final ColumnSchema @SameLen("valueCounts") @Nullable [] columnSchemas; // [projectedCol] -> column schema; null where no schema is bound
+    final int @SameLen("valueCounts") [] valueCounts;       // [projectedCol] -> number of values
+    final int @SameLen("valueCounts") [] recordCounts;      // [projectedCol] -> number of records
+    final int @SameLen("valueCounts") [][] offsets;         // [projectedCol] -> record-level offsets
     /// `[projectedCol] -> int[repCount][]`, **rep-level-indexed** offsets
     /// compacted from the layer-indexed [NestedBatch#multiLevelOffsets]
     /// produced by the worker. `STRUCT`-layer slots (`null`) are dropped so
@@ -34,8 +44,8 @@ final class NestedBatchIndex {
     /// 0-indexed rep level used by internal consumers
     /// ([PqListImpl] / [PqMapImpl] / [PqStructImpl]). Each per-rep-level
     /// `int[]` is sentinel-suffixed (length `count + 1`).
-    final int[][][] multiOffsets;
-    final long[][] elementValidity; // [projectedCol] -> leaf validity bitmap (set bit = present)
+    final int @SameLen("valueCounts") [][] @SameLen({})[] multiOffsets;
+    final long @SameLen("valueCounts") [][] elementValidity; // [projectedCol] -> leaf validity bitmap (set bit = present)
     final ProjectedSchema projectedSchema;
     /// The file these batches came from, for the failures that name one. Batches never
     /// straddle files.
@@ -83,7 +93,16 @@ final class NestedBatchIndex {
     static NestedBatchIndex buildFromBatches(NestedBatch[] batches, ColumnSchema[] columnSchemas,
                                               FileSchema schema, ProjectedSchema projectedSchema,
                                               TopLevelFieldMap fieldMap) {
+        // Establishes the @SameLen("valueCounts") family the fields declare: every
+        // outer array is sized from the batch count, so one projectedCol index is valid
+        // across all of them. The schema array is optional but, when present, must
+        // cover the same columns — without this check a short array would surface
+        // later as an access-time ArrayIndexOutOfBoundsException.
         int colCount = batches.length;
+        if (columnSchemas != null && columnSchemas.length != colCount) {
+            throw new IllegalArgumentException("Column schema count " + columnSchemas.length
+                    + " does not match the " + colCount + " batch columns");
+        }
         Object[] valueArrays = new Object[colCount];
         int[][] defLevels = new int[colCount][];
         int[] valueCounts = new int[colCount];
@@ -139,20 +158,20 @@ final class NestedBatchIndex {
     // ==================== Value Access ====================
 
     /// Get the definition level at the given value index.
-    int getDefLevel(int projectedCol, int valueIndex) {
+    int getDefLevel(@IndexFor("valueCounts") int projectedCol, int valueIndex) {
         int[] dl = defLevels[projectedCol];
         return dl != null ? dl[valueIndex] : columnSchemas[projectedCol].maxDefinitionLevel();
     }
 
     /// Get the maximum repetition level for a column.
-    int getMaxRepLevel(int projectedCol) {
+    int getMaxRepLevel(@IndexFor("valueCounts") int projectedCol) {
         return columnSchemas[projectedCol].maxRepetitionLevel();
     }
 
     /// Get the boxed value at the given index (for generic access paths).
     /// For byte-array physical types this materialises a fresh `byte[]`
     /// copy out of [BinaryBatchValues].
-    Object getValue(int projectedCol, int valueIndex) {
+    Object getValue(@IndexFor("valueCounts") int projectedCol, int valueIndex) {
         Object arr = valueArrays[projectedCol];
         return switch (arr) {
             case int[] a -> a[valueIndex];
@@ -166,19 +185,19 @@ final class NestedBatchIndex {
     }
 
     /// Get a fresh byte[] copy of value `valueIndex` for a varlength column.
-    byte[] getBinary(int projectedCol, int valueIndex) {
+    byte[] getBinary(@IndexFor("valueCounts") int projectedCol, int valueIndex) {
         return ((BinaryBatchValues) valueArrays[projectedCol]).byteArrayAt(valueIndex);
     }
 
     /// Get a UTF-8 decoded string for value `valueIndex` of a varlength column.
-    String getString(int projectedCol, int valueIndex) {
+    String getString(@IndexFor("valueCounts") int projectedCol, int valueIndex) {
         return ((BinaryBatchValues) valueArrays[projectedCol]).stringAt(valueIndex);
     }
 
     /// Decode value `valueIndex` of `projectedCol` to its boxed Java value: an
     /// interned `String` for a `UTF8` / `JSON` leaf, otherwise the converted raw
     /// value. The element must be known non-null.
-    Object decodeLeaf(int projectedCol, int valueIndex, SchemaNode schema) {
+    Object decodeLeaf(@IndexFor("valueCounts") int projectedCol, int valueIndex, SchemaNode schema) {
         return LeafKind.of(schema) == LeafKind.STRING
                 ? getString(projectedCol, valueIndex)
                 : NestedLeafDecoder.decode(getValue(projectedCol, valueIndex), schema);
@@ -187,13 +206,13 @@ final class NestedBatchIndex {
     // ==================== Index Navigation ====================
 
     /// Get the value index for a non-repeated column at the given record.
-    int getValueIndex(int projectedCol, int recordIndex) {
+    int getValueIndex(@IndexFor("valueCounts") int projectedCol, int recordIndex) {
         int[] recordOffsets = offsets[projectedCol];
         return recordOffsets != null ? recordOffsets[recordIndex] : recordIndex;
     }
 
     /// Get the start value index for a repeated column's list at the given record.
-    int getListStart(int projectedCol, int recordIndex) {
+    int getListStart(@IndexFor("valueCounts") int projectedCol, int recordIndex) {
         int[][] ml = multiOffsets[projectedCol];
         if (ml == null) {
             int[] recordOffsets = offsets[projectedCol];
@@ -205,7 +224,7 @@ final class NestedBatchIndex {
     /// Get the end index (exclusive) for a repeated column's list at the
     /// given record. With sentinel-suffixed `multiOffsets[k]` (length
     /// `count + 1`) the last record's end is just `ml[0][recordIndex + 1]`.
-    int getListEnd(int projectedCol, int recordIndex) {
+    int getListEnd(@IndexFor("valueCounts") int projectedCol, int recordIndex) {
         int[][] ml = multiOffsets[projectedCol];
         if (ml == null) {
             int[] recordOffsets = offsets[projectedCol];
@@ -220,14 +239,14 @@ final class NestedBatchIndex {
     }
 
     /// Get the start index at a given multi-level offset level.
-    int getLevelStart(int projectedCol, int level, int itemIndex) {
+    int getLevelStart(@IndexFor("valueCounts") int projectedCol, int level, int itemIndex) {
         return multiOffsets[projectedCol][level][itemIndex];
     }
 
     /// Get the end index (exclusive) at a given multi-level offset level.
     /// `multiOffsets[level]` is sentinel-suffixed (length `count + 1`), so
     /// the next slot is always available.
-    int getLevelEnd(int projectedCol, int level, int itemIndex) {
+    int getLevelEnd(@IndexFor("valueCounts") int projectedCol, int level, int itemIndex) {
         return multiOffsets[projectedCol][level][itemIndex + 1];
     }
 
@@ -235,7 +254,10 @@ final class NestedBatchIndex {
     /// Validity polarity is **set bit = present**, so a null leaf is
     /// indicated by a clear bit (or a `null` validity reference means every
     /// leaf in the batch is present).
-    boolean isElementNull(int projectedCol, int valueIndex) {
+    /// `projectedCol` is `@IndexOrLow`: a negative index means "no projected
+    /// column", which the `projectedCol < 0` guard refines to `@IndexFor`
+    /// before the validity bitmap is indexed.
+    boolean isElementNull(@IndexOrLow("valueCounts") int projectedCol, int valueIndex) {
         if (projectedCol < 0) {
             return true;
         }
