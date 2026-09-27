@@ -94,6 +94,10 @@ public class DeltaByteArrayDecoder implements ValueDecoder {
         }
 
         int prefixLength = prefixLengths[currentIndex];
+        if (prefixLength < 0 || prefixLength > previousValue.length) {
+            throw new ParquetReadException("Invalid prefix length " + prefixLength + " at value index "
+                    + currentIndex + ": previous value has " + previousValue.length + " bytes");
+        }
         ByteBuffer suffix = suffixDecoder.readValue();
         currentIndex++;
 

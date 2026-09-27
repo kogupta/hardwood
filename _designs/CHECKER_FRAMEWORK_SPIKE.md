@@ -157,6 +157,28 @@ those requires annotations propagating through caller contracts — the
 "difficult static proof" the prior adoption note says to decline in favor of
 the existing runtime invariant.
 
+### DELTA byte-array lengths and prefixes (DeltaLengthByteArrayDecoder, DeltaByteArrayDecoder)
+
+DELTA_LENGTH_BYTE_ARRAY now rejects negative lengths ("Negative byte array
+length: N") before the zero-length fast path, and DELTA_BYTE_ARRAY rejects
+prefix lengths below zero or beyond the previous value's length ("Invalid
+prefix length P at value index V: previous value has L bytes") before the
+suffix is consumed — closing the gap where a malformed prefix produced
+`NegativeArraySizeException` or silently wrong reconstruction. Both guards
+live in the single consumption points (`readValue()`), so the batched
+`readByteArrays` paths inherit them. Pinned by
+`DeltaByteArrayDecoderBoundsTest` (five cases: negative length, over-long
+prefix, negative prefix, prefix against the empty first value, and a
+well-formed control; streams composed from the real encoders, which cannot
+produce these values — the decoders must).
+
+The two guard comparisons also proved two previously-warned accesses (total
+diagnostics 2,814 → 2,812). The delta decoders' 8 residual warnings predate
+the spike: `prefixLengths[currentIndex]` bounds against `totalValues`,
+`definitionLevels[i]` vs `output.length`, and count negativity in
+`initialize` — again parallel-array relations outside the guarded invariants.
+No annotations were needed in either file.
+
 ## Remaining spike stages
 
 Guard stages (dictionary indices, DELTA byte-array lengths/prefixes) and the

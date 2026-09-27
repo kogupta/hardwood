@@ -73,6 +73,10 @@ public class DeltaLengthByteArrayDecoder implements ValueDecoder {
 
         int length = lengths[currentIndex++];
 
+        if (length < 0) {
+            throw new ParquetReadException("Negative byte array length: " + length);
+        }
+
         if (length == 0) {
             return EMPTY_BUFFER.duplicate();
         }
