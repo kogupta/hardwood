@@ -9,6 +9,8 @@ package dev.hardwood.internal.reader;
 
 import java.nio.ByteBuffer;
 
+import org.checkerframework.checker.index.qual.NonNegative;
+
 import dev.hardwood.internal.compression.Decompressor;
 import dev.hardwood.internal.metadata.DictionaryPageHeader;
 import dev.hardwood.internal.metadata.PageHeader;
@@ -147,10 +149,6 @@ public final class DictionaryParser {
         }
 
         int numValues = dictionaryPageHeader.numValues();
-        if (numValues < 0) {
-            throw new ParquetReadException(
-                    "Invalid dictionary page: negative numValues (" + numValues + ")");
-        }
 
         if (header.crc() != null) {
             CrcValidator.assertCorrectCrc(header.crc(), compressedData);
@@ -182,7 +180,7 @@ public final class DictionaryParser {
         return parse(dictRegion, columnSchema, metaData, context);
     }
 
-    private static Dictionary decompress(ByteBuffer compressedData, int numValues,
+    private static Dictionary decompress(ByteBuffer compressedData, @NonNegative int numValues,
                                           int uncompressedSize, ColumnSchema column,
                                           CompressionCodec codec,
                                           HardwoodContextImpl context) {

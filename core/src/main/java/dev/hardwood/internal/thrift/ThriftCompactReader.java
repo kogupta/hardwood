@@ -15,6 +15,8 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
+import org.checkerframework.checker.index.qual.NonNegative;
+
 import dev.hardwood.internal.thrift.ThriftCompactConstants.FieldType.Codes;
 import dev.hardwood.reader.ParquetReadException;
 
@@ -262,7 +264,7 @@ public class ThriftCompactReader {
     /// A negative value indicates a malformed or adversarial file and would
     /// otherwise drive a negative allocation or out-of-bounds slice downstream,
     /// so fail fast here with a controlled error naming the field.
-    public int readNonNegativeI32() {
+    public @NonNegative int readNonNegativeI32() {
         int value = readI32();
         if (value < 0) {
             throw malformed("must be non-negative but was " + value);

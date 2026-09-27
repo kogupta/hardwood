@@ -53,13 +53,25 @@ Baseline build on JDK 25: `./mvnw -pl core -am install -DskipITs` passes in 63 s
 
 Each item: annotate the path from the boundary, delete the re-check, run the checker, run the tests.
 
-- [ ] `DictionaryParser.java:150` `numValues < 0`. Boundary: `ThriftCompactReader.readNonNegativeI32()` via `DictionaryPageHeaderReader:40`. Test to delete: `DictionaryParserTest.rejectsANegativeValueCount`. File-level coverage stays in `BadDataHandlingTest.rejectDictheader` / `rejectArrowGH41321`, which assert rejection only.
+- [x] `DictionaryParser.java:150` `numValues < 0`. Boundary: `ThriftCompactReader.readNonNegativeI32()` via `DictionaryPageHeaderReader:40`.
+  - `@NonNegative` on `readNonNegativeI32()`, the `DictionaryPageHeaderReader` local, the `DictionaryPageHeader.numValues` component, `DictionaryParser.decompress` and `Dictionary.parse`.
+  - Re-check and `DictionaryParserTest.rejectsANegativeValueCount` deleted. The rejection is now pinned where it happens: `MalformedMetadataValidationTest.negativeDictionaryNumValuesRejected` asserts `DictionaryPageHeader.num_values — must be non-negative but was -1`. `BadDataHandlingTest.rejectDictheader` / `rejectArrowGH41321` still pass.
+  - Canary: dropping `@NonNegative` from the record component fails the build at `DictionaryParser.java:157` (`[argument] found: int, required: @NonNegative int`).
+  - Checked set: `DictionaryPageHeader`, `DictionaryPageHeaderReader`, `DictionaryParser` (0 errors). `ThriftCompactReader` and `Dictionary` carry annotations but are not in the set yet; their signatures are still checked at every call from a checked class.
 - [ ] `RowGroupIterator.java:249, 252, 519` `tailSkip`/`physicalSkip < 0`. Boundary: `RowReaderBuilder.skip(long)` and `tail(long)` in `ParquetFileReader`; `setTailSkip` is only called under `skip > 0`. Test constructors pass `0`. `RowGroupIterator` has 15 other index errors, which must be resolved before the class joins the checked set.
 - [ ] Trace remaining candidates: `BatchSizing:100`, `PageInfo:74`, `ByteArrayBuilder:35, 91`, `MergePlan:32`, `BoundsReadability:93`, `RowRanges:46`, `SequentialFetchPlan:152`, `ResolvedPredicate:307`, `RleBitPackingHybridEncoder:56`, `BitPacker:31`, `FileMetadataCache:140`.
 - [ ] Classes on the paths above that must be clean before joining the checked set: `ThriftCompactReader` (12 errors), `Dictionary` (17), `RowGroupIterator` (15), `ParquetFileReader` (1), `BatchSizing` (1). `DictionaryPageHeaderReader`, `DictionaryPageHeader`, `DictionaryParser`: 0.
-- [ ] `index-check` profile in `core/pom.xml`; `checker-framework.version` in the parent POM; `checker-qual` as `provided`.
-- [ ] Full `./mvnw verify` on JDK 25 before pushing.
+- [x] `index-check` profile in `core/pom.xml`; `checker-framework.version` in the parent POM; `checker-qual` as `provided`. Run: `./mvnw -pl core -am -Pindex-check install -DskipITs` (52 s with Error Prone and unit tests, vs 63 s baseline run earlier; within noise). `.mvn/jvm.config` flags suffice; nothing extra needed for Maven.
+- [ ] Full `./mvnw verify` on JDK 25 before pushing. numValues change: all modules pass except the Docker-based S3 ITs (`Could not find a valid Docker environment`; no Docker in this container). `-rf :hardwood-s3 -DskipITs` passes; core unit tests 13,890 run, 0 failures. Keep open: the S3 ITs have not run.
 
 ## Next: index spaces
+
+Findings so far (history read, no spike yet):
+
+- `0625f55b` (#525) is a guard test, not a shipped bug: it pins the field-index vs leaf-column-index case before a refactor could break it.
+- `6cff8f99` (#1242) fixed a real bug: a predicate on an unprojected column had no projected index and threw at row-level evaluation. Missing mapping, not an int passed across spaces.
+- No other instance found in commit messages.
+- Plan: qualifiers `@ProjectedIndex`, `@OriginalIndex`, `@FieldIndex`, `@LeafIndex` on plain `int`, first on `ProjectedSchema.toOriginalIndex` / `toProjectedIndex`.
+- Unknowns to settle in the spike: array subscripts are not checked by the Subtyping Checker, so raw `array[idx]` mix-ups slip through; the qualifier of `idx + 1` and of loop counters; the `-1` "not projected" sentinel needs its own qualifier. Measure annotations and casts needed in `ProjectedSchema` plus one consumer (`TopLevelFieldMap` or `FlatRowReader`).
 
 - [ ] Subtyping Checker qualifiers for original vs projected column index, field index vs leaf-column index. Evidence: `0625f55b` (#525) "confusing the two spaces there returns wrong rows (or throws) without any other signal"; #1242. Surface: `toOriginalIndex` 14 refs, `toProjectedIndex` 15, `projectedCol` 127, `projectedIndex` 89, `originalIndex` 32, `fieldIndex` 168.

@@ -74,6 +74,15 @@ class MalformedMetadataValidationTest {
     }
 
     @Test
+    void negativeDictionaryNumValuesRejected() {
+        // DictionaryPageHeader: field1 num_values = -1, which would otherwise size the decoded
+        // dictionary's arrays
+        assertThatThrownBy(() -> DictionaryPageHeaderReader.read(reader(NEXT_I32, 0x01, STOP)))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("DictionaryPageHeader.num_values — must be non-negative but was -1");
+    }
+
+    @Test
     void negativeDataPageOffsetRejected() {
         // ColumnMetaData: field9 data_page_offset (i64) = -1
         assertThatThrownBy(() -> ColumnMetaDataReader.read(

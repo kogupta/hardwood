@@ -7,10 +7,12 @@
  */
 package dev.hardwood.internal.metadata;
 
+import org.checkerframework.checker.index.qual.NonNegative;
+
 import dev.hardwood.metadata.Encoding;
 
 /// Header for dictionary page.
 public record DictionaryPageHeader(
-        int numValues,
+        @NonNegative int numValues,
         Encoding encoding) {
 }

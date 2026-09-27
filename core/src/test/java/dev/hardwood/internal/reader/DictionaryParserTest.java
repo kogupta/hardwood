@@ -167,22 +167,6 @@ class DictionaryParserTest {
         }
     }
 
-    /// `numValues` sizes the decoded dictionary, so a negative count has to be refused before it
-    /// reaches the decoder rather than surfacing there as an array-sizing failure.
-    @Test
-    void rejectsANegativeValueCount() throws Exception {
-        DictionaryPage page = firstDictionaryPage();
-        PageHeader negative = withDictionaryHeader(page.header(),
-                new DictionaryPageHeader(-1, page.header().dictionaryPageHeader().encoding()));
-
-        try (HardwoodContextImpl context = HardwoodContextImpl.create()) {
-            assertThatThrownBy(() -> DictionaryParser.parsePage(negative, page.body(),
-                    page.columnSchema(), page.metaData(), context))
-                    .isInstanceOf(ParquetReadException.class)
-                    .hasMessage("Invalid dictionary page: negative numValues (-1)");
-        }
-    }
-
     private static PageHeader withType(PageHeader header, PageType type) {
         return new PageHeader(type, header.uncompressedPageSize(), header.compressedPageSize(),
                 header.dataPageHeader(), header.dataPageHeaderV2(), header.dictionaryPageHeader(), header.crc());

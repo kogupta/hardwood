@@ -7,6 +7,8 @@
  */
 package dev.hardwood.internal.thrift;
 
+import org.checkerframework.checker.index.qual.NonNegative;
+
 import dev.hardwood.internal.metadata.DictionaryPageHeader;
 import dev.hardwood.internal.thrift.ThriftCompactConstants.FieldType.Codes;
 import dev.hardwood.metadata.Encoding;
@@ -25,7 +27,7 @@ public class DictionaryPageHeaderReader {
     }
 
     private static DictionaryPageHeader readInternal(ThriftCompactReader reader) {
-        int numValues = 0;
+        @NonNegative int numValues = 0;
         Encoding encoding = null;
 
         while (true) {

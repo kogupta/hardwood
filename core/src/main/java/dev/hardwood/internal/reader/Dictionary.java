@@ -9,6 +9,8 @@ package dev.hardwood.internal.reader;
 
 import java.nio.charset.StandardCharsets;
 
+import org.checkerframework.checker.index.qual.NonNegative;
+
 import dev.hardwood.internal.encoding.PlainDecoder;
 import dev.hardwood.internal.encoding.RleBitPackingHybridDecoder;
 import dev.hardwood.metadata.PhysicalType;
@@ -32,7 +34,7 @@ public sealed interface Dictionary {
     /// @param type physical type of the column
     /// @param typeLength type length for fixed-length types (may be null for variable-length types)
     /// @return typed dictionary
-    static Dictionary parse(byte[] data, int numValues, PhysicalType type, Integer typeLength) {
+    static Dictionary parse(byte[] data, @NonNegative int numValues, PhysicalType type, Integer typeLength) {
         PlainDecoder decoder = new PlainDecoder(data, 0, type, typeLength);
 
         return switch (type) {

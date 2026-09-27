@@ -61,6 +61,15 @@
       <scope>test</scope>
     </dependency>
 
+    <!-- Index Checker qualifiers (`@NonNegative`, `@IndexFor`, ...). They document and
+         type-check index facts in internal code and have no role at run time. -->
+    <dependency>
+      <groupId>org.checkerframework</groupId>
+      <artifactId>checker-qual</artifactId>
+      <version>${checker-framework.version}</version>
+      <scope>provided</scope>
+    </dependency>
+
     <!-- Test dependencies -->
     <dependency>
       <groupId>org.junit.jupiter</groupId>
@@ -213,4 +222,43 @@
       </plugin>
     </plugins>
   </build>
+
+  <profiles>
+    <!-- Runs the Checker Framework Index Checker over the classes matched by
+         `index-check.classes`. Every class in that set compiles with zero index errors;
+         see _designs/INDEX_CHECKER.md. -->
+    <profile>
+      <id>index-check</id>
+      <properties>
+        <index-check.classes>^dev\.hardwood\.internal\.(metadata\.DictionaryPageHeader|thrift\.DictionaryPageHeaderReader|reader\.DictionaryParser)(\..*)?$</index-check.classes>
+      </properties>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-compiler-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>default-compile</id>
+                <configuration>
+                  <compilerArgs combine.children="append">
+                    <arg>-processor</arg>
+                    <arg>org.checkerframework.checker.index.IndexChecker</arg>
+                    <arg>-AonlyDefs=${index-check.classes}</arg>
+                  </compilerArgs>
+                  <annotationProcessorPaths combine.children="append">
+                    <path>
+                      <groupId>org.checkerframework</groupId>
+                      <artifactId>checker</artifactId>
+                      <version>${checker-framework.version}</version>
+                    </path>
+                  </annotationProcessorPaths>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
 </project>
