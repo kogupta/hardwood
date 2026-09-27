@@ -13,6 +13,8 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 
+import org.checkerframework.checker.index.qual.NonNegative;
+
 import dev.hardwood.HardwoodContext;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
@@ -382,7 +384,7 @@ public class ParquetFileReader implements Closeable {
     }
 
     RowReader buildRowReader(ColumnProjection projection, FilterPredicate filter,
-                             RowGroupPredicate rowGroupFilter, long maxRows, long skip) throws IOException {
+                             RowGroupPredicate rowGroupFilter, long maxRows, @NonNegative long skip) throws IOException {
         // Apply the row-group predicate (e.g. byte-range) up front so `skip` indexes
         // into the kept sequence — a caller doing split-aware reading can seek inside *its*
         // split. Stats-based row-group dropping (via FilterPredicate) stays inside the
@@ -507,13 +509,13 @@ public class ParquetFileReader implements Closeable {
 
     private RowReader buildRowReader(ColumnProjection projection, FilterPredicate filter,
                                      long maxRows, List<RowGroup> firstFileRowGroups,
-                                     long tailSkip) throws IOException {
+                                     @NonNegative long tailSkip) throws IOException {
         return buildRowReader(projection, filter, maxRows, firstFileRowGroups, tailSkip, 0L);
     }
 
     private RowReader buildRowReader(ColumnProjection projection, FilterPredicate filter,
                                      long maxRows, List<RowGroup> firstFileRowGroups,
-                                     long tailSkip, long physicalSkip) throws IOException {
+                                     @NonNegative long tailSkip, @NonNegative long physicalSkip) throws IOException {
         ResolvedPredicate resolved = resolveFilter(filter);
 
         // The predicate's columns are decoded whether or not the caller projected them, so a
@@ -687,7 +689,8 @@ public class ParquetFileReader implements Closeable {
 
     /// Creates an iterator over this reader's files and tracks it until it is
     /// closed. See [#rowGroupIterators].
-    private RowGroupIterator trackedIterator(long maxRows, long tailSkip, long physicalSkip) {
+    private RowGroupIterator trackedIterator(long maxRows, @NonNegative long tailSkip,
+                                             @NonNegative long physicalSkip) {
         RowGroupIterator iterator = new RowGroupIterator(fileMetadataCache, rowGroupIterators::remove,
                 context, maxRows, tailSkip, physicalSkip);
         rowGroupIterators.add(iterator);
@@ -760,6 +763,9 @@ public class ParquetFileReader implements Closeable {
     }
 
     /// Evaluate a [RowGroupPredicate] against one row group.
+    // The Value Checker gives the switch one `yield`'s constant as its type and then rejects
+    // the other `yield`: a false positive with no index fact behind it.
+    @SuppressWarnings("value")
     private static boolean matches(RowGroup rg, RowGroupPredicate p) {
         return switch (p) {
             case RowGroupPredicate.ByteRange b -> {
@@ -820,7 +826,7 @@ public class ParquetFileReader implements Closeable {
         /// Zero (default): start from row 0. Positive: SQL `OFFSET` — a physical
         /// absolute row index without a filter, or a logical offset over matched
         /// rows with one. Mutually exclusive with `tailRows`.
-        private long skip;
+        private @NonNegative long skip;
 
         private RowReaderBuilder(ParquetFileReader fileReader) {
             this.fileReader = fileReader;

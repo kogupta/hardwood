@@ -22,6 +22,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
+import org.checkerframework.checker.index.qual.NonNegative;
+
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.FetchReason;
@@ -86,7 +88,7 @@ public class RowGroupIterator implements Closeable {
     private volatile boolean closed;
     private final HardwoodContextImpl context;
     private final long maxRows;
-    private final long physicalSkip;
+    private final @NonNegative long physicalSkip;
 
     /// Number of leading rows of the first row group to skip. Non-zero only on
     /// the tail-read fast path; consumed by [#computeFetchPlans] to synthesize
@@ -94,7 +96,7 @@ public class RowGroupIterator implements Closeable {
     /// machinery drops the leading pages and trims the straddling page. May
     /// be promoted from the construction-time value of `0` via
     /// [#setTailSkip(long)] once the gate decision is in.
-    private long tailSkip;
+    private @NonNegative long tailSkip;
     private long firstRowGroupSkip;
 
     // Set after first file
@@ -207,7 +209,7 @@ public class RowGroupIterator implements Closeable {
     ///        columns would emit unmaskable rows from offset 0 and break
     ///        cross-column alignment.
     public RowGroupIterator(List<InputFile> inputFiles, HardwoodContextImpl context,
-                            long maxRows, long tailSkip) {
+                            long maxRows, @NonNegative long tailSkip) {
         this(inputFiles, context, maxRows, tailSkip, 0);
     }
 
@@ -225,7 +227,7 @@ public class RowGroupIterator implements Closeable {
     ///        leading rows, the other drops leading row groups, with no combined
     ///        semantics.
     public RowGroupIterator(List<InputFile> inputFiles, HardwoodContextImpl context,
-                            long maxRows, long tailSkip, long physicalSkip) {
+                            long maxRows, @NonNegative long tailSkip, @NonNegative long physicalSkip) {
         this(new FileMetadataCache(inputFiles), true, NO_CLOSE_LISTENER, context,
                 maxRows, tailSkip, physicalSkip);
     }
@@ -238,20 +240,14 @@ public class RowGroupIterator implements Closeable {
     public RowGroupIterator(FileMetadataCache fileMetadataCache,
                             Consumer<RowGroupIterator> closeListener,
                             HardwoodContextImpl context,
-                            long maxRows, long tailSkip, long physicalSkip) {
+                            long maxRows, @NonNegative long tailSkip, @NonNegative long physicalSkip) {
         this(fileMetadataCache, false, closeListener, context, maxRows, tailSkip, physicalSkip);
     }
 
     private RowGroupIterator(FileMetadataCache fileMetadataCache, boolean ownsFileMetadataCache,
                              Consumer<RowGroupIterator> closeListener,
-                             HardwoodContextImpl context, long maxRows, long tailSkip,
-                             long physicalSkip) {
-        if (tailSkip < 0) {
-            throw new IllegalArgumentException("tailSkip must be non-negative, got " + tailSkip);
-        }
-        if (physicalSkip < 0) {
-            throw new IllegalArgumentException("physicalSkip must be non-negative, got " + physicalSkip);
-        }
+                             HardwoodContextImpl context, long maxRows, @NonNegative long tailSkip,
+                             @NonNegative long physicalSkip) {
         if (tailSkip > 0 && physicalSkip > 0) {
             throw new IllegalArgumentException(
                     "tailSkip and physicalSkip are mutually exclusive, got tailSkip=" + tailSkip
@@ -515,10 +511,7 @@ public class RowGroupIterator implements Closeable {
     /// @throws IllegalStateException if a fetch plan has already been
     ///         computed for the first work item, since changing the tail
     ///         skip after the fact would yield inconsistent plans.
-    public void setTailSkip(long tailSkip) {
-        if (tailSkip < 0) {
-            throw new IllegalArgumentException("tailSkip must be non-negative, got " + tailSkip);
-        }
+    public void setTailSkip(@NonNegative long tailSkip) {
         if (!fetchPlanCache.isEmpty()) {
             throw new IllegalStateException(
                     "setTailSkip must be called before any column requests its fetch plan");

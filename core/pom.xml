@@ -230,7 +230,7 @@
     <profile>
       <id>index-check</id>
       <properties>
-        <index-check.classes>^dev\.hardwood\.internal\.(metadata\.DictionaryPageHeader|thrift\.DictionaryPageHeaderReader|reader\.DictionaryParser)(\..*)?$</index-check.classes>
+        <index-check.classes>^dev\.hardwood\.(internal\.metadata\.DictionaryPageHeader|internal\.thrift\.DictionaryPageHeaderReader|internal\.reader\.DictionaryParser|reader\.ParquetFileReader)(\..*)?$</index-check.classes>
       </properties>
       <build>
         <plugins>
