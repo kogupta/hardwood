@@ -144,6 +144,66 @@ Sequencing: (1) first — it is independent, cheap, and shrinks the baseline;
 (2) second — its result decides whether the premise graduates from decode
 layer to reader layer.
 
+## Experiment 1 — `NoUnsafeIntegralNarrowing` + Error Prone baseline (done, 2026-09-27)
+
+The check is implemented in `error-prone-checks`
+(`NoUnsafeIntegralNarrowing.java`, nine unit tests): a cast out of `long` into
+`int`/`short`/`char`/`byte` is rejected unless the operand is a compile-time
+constant that fits, with `@SuppressWarnings` as the documented escape. Wired
+into the qa profile at WARN alongside the §14 baseline set, and measured over a
+clean `core` compile:
+
+| Check | Hits |
+| --- | --- |
+| `NoUnsafeIntegralNarrowing` | 99 |
+| `FutureReturnValueIgnored` | 6 |
+| `IntLongMath` | 1 |
+| `ConstantOverflow` | 1 |
+| `InterruptedExceptionSwallowed` | 1 |
+| `BadShiftAmount`, `ArrayEquals`, `CollectionIncompatibleType`, `MissingCasesInEnumSwitch`, `ComparisonOutOfRange`, `ReturnValueIgnored` | 0 |
+
+The six zero-hit checks confirm the note's claim that the codebase is already
+disciplined on those classes. The 99 narrowing hits were classified by reading
+every hit site:
+
+- **~60 — masked bit-slicing** (`(int) (bits & mask)` in the unpack loops,
+  `(byte) accumulator` byte-stream slicing): truncation *is* the intent and the
+  mask bounds the value. Safe today, but they are the noise floor: v1 flags
+  them because a cast alone proves nothing.
+- **~8 — `Math.min`/`Math.max` clamps** (`(int) Math.min(intBound, longValue)`,
+  buffer-growth clamped to `Integer.MAX_VALUE`): bounded by an int argument.
+  **The Checker Framework's Value checker proves these for free** — `Math.min`
+  carries `@PolyUpperBound` in the annotated JDK. This is the one place where
+  EP flags the risk and CF discharges the proof; the strongest single argument
+  in this experiment for running both tools.
+- **~10 — file-controlled headers** (`(int) (header >> 1)` RLE repeat counts in
+  `RleBitPackingHybridDecoder`, `PageRecordCounter`, `FixedSizeListDetector`;
+  `(int) getValueCount(header)`; thrift zigzag and field ids): a corrupt file
+  controls these longs, and truncation can turn a huge count into a negative
+  one downstream. **Genuine review findings, not noise** — queued for
+  `Math.toIntExact` / range-check fixes.
+- **~8 — bounded by construction** (`floorMod(...)` × unit, CRC32 low word,
+  hash mixing low-32): safe, but the proof is cross-term arithmetic no
+  syntactic check can express; these are the documented-suppression cases.
+- **~5 — unproven domain conversions**: `(int) epochDay` in the INT32 date
+  conversion (an out-of-range date silently wraps), and `(int) (bitPos >>> 3)`
+  byte offsets in `DeltaBinaryPackedDecoder` — whose own comment says page
+  cursors reach 2^34, making the truncation-to-int cursor a real edge case.
+
+Three conclusions:
+
+1. The check is viable but v1 must gain two escapes before ERROR severity: a
+   mask-fit escape (`x & mask` where the mask fits the target) and a
+   clamp escape (`Math.min`/`Math.max` with an int operand). That removes
+   roughly 70% of the noise while keeping every file-controlled and
+   unproven-conversion finding.
+2. Even at v1 the check paid for itself: three genuine defect classes found
+   (file-controlled header truncations, `epochDay` wrapping, the 2^34 cursor
+   edge).
+3. The clamp class is the concrete EP↔CF bridge: EP finds the cast, CF's
+   Value checker proves the bound once the value is typed — which is exactly
+   the boundary-annotation model this doc proposes.
+
 ## Costs, honestly
 
 - 8–14× compile overhead on `core` under the profile (opt-in; default builds
