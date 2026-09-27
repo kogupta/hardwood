@@ -164,4 +164,72 @@ final class NoUnsafeIntegralNarrowingTest {
                         """)
                 .doTest();
     }
+
+    @Test
+    void flagsUnboxedChain() {
+        compilationHelper
+                .addSourceLines(
+                        "src/main/java/dev/hardwood/Test.java",
+                        """
+                        package dev.hardwood;
+                        final class Test {
+                          int test(Long value) {
+                            // BUG: Diagnostic contains: Do not cast a long to a narrower integral type
+                            return (int) (long) value;
+                          }
+                        }
+                        """)
+                .doTest();
+    }
+
+    @Test
+    void allowsConstantFieldThatFits() {
+        compilationHelper
+                .addSourceLines(
+                        "src/main/java/dev/hardwood/Test.java",
+                        """
+                        package dev.hardwood;
+                        final class Test {
+                          private static final long LIMIT = 1024L;
+
+                          int test() {
+                            return (int) LIMIT;
+                          }
+                        }
+                        """)
+                .doTest();
+    }
+
+    @Test
+    void allowsFoldedArithmeticConstantThatFits() {
+        compilationHelper
+                .addSourceLines(
+                        "src/main/java/dev/hardwood/Test.java",
+                        """
+                        package dev.hardwood;
+                        final class Test {
+                          int test() {
+                            return (int) (1024L * 2);
+                          }
+                        }
+                        """)
+                .doTest();
+    }
+
+    @Test
+    void flagsMaskedOperandWithoutFittingConstant() {
+        compilationHelper
+                .addSourceLines(
+                        "src/main/java/dev/hardwood/Test.java",
+                        """
+                        package dev.hardwood;
+                        final class Test {
+                          int test(long base) {
+                            // BUG: Diagnostic contains: Do not cast a long to a narrower integral type
+                            return (int) (base & 0xFFFF_FFFFL);
+                          }
+                        }
+                        """)
+                .doTest();
+    }
 }

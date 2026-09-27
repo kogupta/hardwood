@@ -401,6 +401,9 @@
                   <version>${error-prone.version}</version>
                 </path>
                 <path>
+                  <!-- Build with -am (or install this module first) when its sources
+                       change: a stale installed jar fails the qa compile with an
+                       opaque "not a valid checker name" error. -->
                   <groupId>dev.hardwood</groupId>
                   <artifactId>hardwood-error-prone-checks</artifactId>
                   <version>${project.version}</version>

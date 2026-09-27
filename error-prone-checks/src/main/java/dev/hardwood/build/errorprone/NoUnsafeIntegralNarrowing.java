@@ -34,7 +34,9 @@ import com.sun.tools.javac.tree.JCTree.JCPrimitiveTypeTree;
 /// Scope is deliberately narrow: only casts out of `long` (the file-size /
 /// offset domain in this reader) into `int`, `short`, `char`, or `byte`.
 /// Narrowing between smaller types (for example `int` to `short`) is not
-/// checked, and boxed `Long` operands are skipped.
+/// checked. A boxed `Long` cannot be cast straight to these targets (javac
+/// rejects it); the explicit unbox-then-cast chain `(int) (long) boxed` is
+/// flagged once.
 @AutoService(BugChecker.class)
 @BugPattern(
         name = "NoUnsafeIntegralNarrowing",

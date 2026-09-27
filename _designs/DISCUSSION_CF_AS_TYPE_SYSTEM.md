@@ -1,7 +1,7 @@
-# Discussion: the Checker Framework as a narrow type system for index arithmetic
+# Proposal: the Checker Framework as a narrow type system for index arithmetic
 
-> Draft issue — not yet filed to a tracker (fork has no issue permission).
-> Evidence: spike #1283, branch `1283-cf-index-value-spike`, findings in
+> Status: proposal for discussion, not yet adopted. Evidence: spike #1283,
+> branch `1283-cf-index-value-spike`, findings in
 > `_designs/CHECKER_FRAMEWORK_SPIKE.md`.
 
 ## Premise
@@ -36,7 +36,10 @@ compile cost stop being worth it.
   MinLen-style facts arrive via `@ArrayLenRange` from the Value checker.
 - **It coexists with Error Prone.** One javac invocation, `-Xplugin` for EP and
   a named processor for CF, identical wall clock, both diagnostics present.
-  No conflict, no wiring changes needed.
+  No conflict, no wiring changes needed. One caveat: when EP reports an
+  *error* in the same javac run, the Checker Framework's warnings are not
+  printed at all, so a combined CI job shows no CF findings on any build that
+  also fails an EP check.
 - **Warnings-only mode makes adoption incremental.** `-Awarns` turns every
   finding into a warning, so the profile can run in CI as an instrument long
   before anyone gates on it.
@@ -103,7 +106,11 @@ rather than unlikely.
 
 ## Open question: would custom types eliminate more checks?
 
-Not yet answered — needs an experiment. Candidates from the codebase:
+Open question — needs an experiment, though the parallel spike
+(`claude/fervent-ramanujan-ucff0m`) already answered part of it: a custom
+column-index checker with 42 unit tests and canary files reproducing the
+#903 bug class builds and runs under the same wiring (see
+`_designs/INDEX_CHECKER.md` on that branch). Candidates from the codebase:
 
 - `@WithinPage` — an offset/length proven to lie inside the current page
   buffer. Would replace the manual `pos + length` EOF checks with a typed
@@ -147,11 +154,14 @@ layer to reader layer.
 ## Experiment 1 — `NoUnsafeIntegralNarrowing` + Error Prone baseline (done, 2026-09-27)
 
 The check is implemented in `error-prone-checks`
-(`NoUnsafeIntegralNarrowing.java`, nine unit tests): a cast out of `long` into
+(`NoUnsafeIntegralNarrowing.java`, 13 unit tests): a cast out of `long` into
 `int`/`short`/`char`/`byte` is rejected unless the operand is a compile-time
-constant that fits, with `@SuppressWarnings` as the documented escape. Wired
-into the qa profile at WARN alongside the §14 baseline set, and measured over a
-clean `core` compile:
+constant that fits (literals, constant fields, and folded expressions), with
+`@SuppressWarnings` as the documented escape. It measured 99 hits over a clean
+`core` compile; the checks run in the default build at WARN only while their
+escapes are missing — the eleven WARN flags live in the opt-in
+`error-prone-warnings` profile (qa keeps `NoVar`/`NoLegacyJavadoc` at ERROR),
+and a check promotes once its escape hatches exist:
 
 | Check | Hits |
 | --- | --- |
@@ -185,10 +195,13 @@ every hit site:
 - **~8 — bounded by construction** (`floorMod(...)` × unit, CRC32 low word,
   hash mixing low-32): safe, but the proof is cross-term arithmetic no
   syntactic check can express; these are the documented-suppression cases.
-- **~5 — unproven domain conversions**: `(int) epochDay` in the INT32 date
-  conversion (an out-of-range date silently wraps), and `(int) (bitPos >>> 3)`
-  byte offsets in `DeltaBinaryPackedDecoder` — whose own comment says page
-  cursors reach 2^34, making the truncation-to-int cursor a real edge case.
+- **~5 — unproven domain conversions**: `(int) (bitPos >>> 3)` byte offsets in
+  `DeltaBinaryPackedDecoder`, whose own comment says page cursors reach 2^34,
+  making the truncation-to-int cursor a real edge case. A sixth site, the
+  `(int) epochDay` in the INT32 date conversion, is a false positive: the
+  conversion already range-checks and throws before the cast, and EP cannot
+  see the check. It is now the documented suppression example
+  (`PhysicalValueConverter.dateToInt`, suppressed with the bound stated).
 
 Three conclusions:
 
@@ -197,16 +210,16 @@ Three conclusions:
    clamp escape (`Math.min`/`Math.max` with an int operand). That removes
    roughly 70% of the noise while keeping every file-controlled and
    unproven-conversion finding.
-2. Even at v1 the check paid for itself: three genuine defect classes found
-   (file-controlled header truncations, `epochDay` wrapping, the 2^34 cursor
-   edge).
+2. Even at v1 the check paid for itself: two genuine defect classes found
+   (file-controlled header truncations, the 2^34 cursor edge), plus one
+   documented false positive that became the suppression example.
 3. The clamp class is the concrete EP↔CF bridge: EP finds the cast, CF's
    Value checker proves the bound once the value is typed — which is exactly
    the boundary-annotation model this doc proposes.
 
 ## Experiment 2 — pilot classes annotated (done, 2026-09-27)
 
-The four pilot classes are annotated per the prior note's sketches (~58
+The four pilot classes are annotated (~58
 qualifier annotations, no checker logic changed):
 
 - `NestedBatchIndex` — the eight outer arrays are one
@@ -234,10 +247,13 @@ constructor ranges count, RecordShredder bind lengths) — each closing an
 ArrayIndexOutOfBounds path that today surfaces at access time. The premise's
 direction held: boundary gains checks, internals gain types. `checker-qual`
 moved to a project-level `provided`+`optional` dependency so annotations
-compile without the profile (revising the spike's recorded deviation).
+compile without the profile.
 
 Clean `core` compile under the profile, before → after (Maven-format
-`[WARNING] file:[line,col] [key]` count):
+`[WARNING] file:[line,col] [key]` count). Counting note: the first three
+experiment runs predate the `error-prone-warnings` profile split, so their
+totals include the 116 Error Prone WARN hits the qa profile emitted in the
+same compile; the CF-only figures below subtract them.
 
 | File | Before | After |
 | --- | --- | --- |
@@ -252,17 +268,17 @@ Clean `core` compile under the profile, before → after (Maven-format
 | NestedBatchDataView | 161 | 192 |
 | VariantShredReassembler | 68 | 90 |
 | Pq{Int,Long,Double}ListImpl | 21 each | 33 each |
-| **Whole module** | **2,928** | **3,190** |
+| **Whole module (CF only)** | **2,812** | **3,074** |
 
 Findings:
 
 1. **The SameLen family works and is cheap.** Eight arrays tied to one anchor
    with one constructor check took NestedBatchIndex down 23 warnings; every
    accessor that indexes a projected column is now proven.
-2. **Proof obligations are conserved, not destroyed.** The −38 in the pilots
-   became +~300 in their callers — dominated by the flyweight cursor layer
+2. **Proof obligations are conserved, not destroyed.** The pilots' −24 became
+   +~260 in their callers — dominated by the flyweight cursor layer
    (PqListImpl/PqMapImpl/PqStructImpl, +179) that consumes the accessors. This
-   is the precise cost of the prior note's stop condition: the outer
+   is the precise cost of the stop condition this doc records: the outer
    projected-column dimension typed for free, but the inner record/level/item
    dimensions now demand typing in the cursors, which is where the remaining
    work is. The reader/batch layer's 2:1 warning concentration is now
@@ -303,8 +319,9 @@ the two mechanics that matter for any adoption plan:
    keeps a non-throwing path — the annotation surfaced that contract too
    (a test caught the first strict version).
 
-Whole-module profile warnings: **2,928 → 2,871**, below the pre-annotation
-baseline, with the four pilot classes and their cursor layer typed:
+Whole-module profile warnings: **2,812 → 2,755** (CF only), below the
+pre-annotation baseline, with the four pilot classes and their cursor layer
+typed:
 
 | File | Baseline | Chain closed |
 | --- | --- | --- |
@@ -321,14 +338,21 @@ baseline, with the four pilot classes and their cursor layer typed:
 ProjectedSchema, PqListImpl and PqStructImpl sit slightly above baseline:
 their remaining warnings are the element-wise mapping gap (constructor sites
 that build mapping arrays value by value) and the inner jagged dimensions the
-prior note's stop condition excluded. Those are the honest price of typing the
+prior stop condition excluded. Those are the honest price of typing the
 outer dimension; they are documented residuals, not regressions. Full core
-suite green throughout (13,994 tests).
+suite green throughout (13,997 tests after the review round; 13,994 at chain
+closure).
 
 ## Costs, honestly
 
 - 8–14× compile overhead on `core` under the profile (opt-in; default builds
   unaffected).
+- Runtime cost after the review round: none on the hot path. `refineProjCol`
+  is a trusted conversion (no branch); the remaining runtime work is three
+  once-per-batch construction checks and one full pass over a column's
+  dictionary indices before each all-present SIMD dispatch — O(batch) per
+  column, not per value. The nested-read benchmarks under
+  `performance-testing/` were not re-run; that is the open cost item.
 - Annotation maintenance: signatures become part of the correctness story, so
   changes ripple into call sites visibly — a feature, but a real tax during
   refactors.
@@ -341,8 +365,10 @@ suite green throughout (13,994 tests).
 
 1. Do we accept the premise — boundary checks stay, internal index checks get
    replaced by typed signatures — as the direction?
-2. Adopt the profile as an opt-in CI instrument now (trend the 2,812 baseline),
-   and let the pilot classes drive when internal checks start coming out?
+2. Adopt the profile as an opt-in CI instrument now (trend the CF-only
+   whole-module count: 2,812 before the pilots, 2,755 at chain closure;
+   re-baseline each round), and let the pilot classes drive when internal
+   checks start coming out?
 3. Is the scope fence (index arithmetic only) right, or should the Value
    checker's constant/length facts be in scope from day one?
 4. Do we want the custom-qualifier experiment (`@WithinPage` et al.) run on

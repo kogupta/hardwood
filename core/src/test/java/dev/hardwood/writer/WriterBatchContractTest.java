@@ -18,6 +18,7 @@ import org.junit.jupiter.api.io.TempDir;
 import dev.hardwood.OutputFile;
 import dev.hardwood.Validity;
 import dev.hardwood.internal.writer.ByteBufferOutputFile;
+import dev.hardwood.internal.writer.LogicalTypeValueRange;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.schema.FileSchema;
@@ -84,6 +85,15 @@ class WriterBatchContractTest {
             assertThatThrownBy(() -> writer.columnWriter().writeBatch(batch -> batch.ints(-1, new int[] { 1 })))
                     .isInstanceOf(IndexOutOfBoundsException.class);
         }
+    }
+
+    @Test
+    void rejectsRangeCountMismatchedWithSchema() {
+        // The batch's per-column arrays are sized from the schema's leaf-column
+        // count, so a ranges array of another length is rejected at the boundary.
+        assertThatThrownBy(() -> new ColumnBatch(oneColumn(), new LogicalTypeValueRange[0]))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column range count 0 does not match the 1 leaf columns");
     }
 
     @Test

@@ -5,8 +5,7 @@
 Feasibility spike for the Checker Framework's Index Checker (Constant Value
 Checker included as its subchecker) over `hardwood-core`, per
 [harness issue #1283](https://github.com/hardwood-hq/hardwood/issues/1283).
-This document records the measured facts; the adopt/stop verdict lands here
-when the spike completes.
+This document records the measured facts and the verdict.
 
 ## Profile shape
 
@@ -26,19 +25,32 @@ with a standalone javac before being committed:
    annotated-JDK annotations through `Elements.getTypeElement`, which reads
    the compilation classpath — the processor path alone does not feed that
    lookup on current JDKs. Without `org.checkerframework:checker-qual`
-   (`provided`, profile-scoped) on the classpath, the run fails with
+   on the classpath, the run fails with
    `AnnotationBuilder: fromClass can't load class
    org.checkerframework.dataflow.qual.Deterministic`. Both the processor path
    and the classpath carry `checker`, `checker-qual` and `checker-util`
-   (`annotationProcessorPaths` does not resolve transitives).
+   (`annotationProcessorPaths` does not resolve transitives). In the shipped
+   wiring `checker-qual` is a project-level `provided` + `optional` dependency
+   of `core`, not profile-scoped: the pilot annotations must compile in the
+   default build too, and `optional` keeps the jar off consumers' classpaths.
 3. **Three skipped classes.** The framework crashes
-   (`BugInCF` in `ElementAnnotationApplier`: no handler for
-   `ElementKind.BINDING_VARIABLE`) when applying annotations to array-typed
-   pattern binding variables, e.g. `values instanceof int[] a` in
-   `ColumnReader.getInts()`. Probed: skipping the individual methods does not
-   gate the crashing phase (annotation application is not per-method-gated);
-   skipping the classes does. `-AskipDefs` covers the three classes with that
-   construct — `dev.hardwood.reader.ColumnReader`,
+   (`BugInCF` in `ElementAnnotationApplier.applyInternal`: no handler for
+   `ElementKind.BINDING_VARIABLE`) when a qualifier whose expression names an
+   array resolves against an array-typed pattern binding variable.
+   Reproducer: `dev.hardwood.reader.ColumnReader` line 367,
+   `if (!(values instanceof int[] a))`, followed by an access where the
+   checker resolves a named-expression annotation against `a` — javac reports
+   `error: ElementAnnotationUtil.apply: illegal argument: a [BINDING_VARIABLE]
+   with type int[]` and the run dies in `BugInCF`. A minimal standalone probe
+   (`if (o instanceof int[] a) return a.length;`) does not reproduce it; the
+   crash needs the annotated access in the same scope, so it is recorded
+   against the full module instead.
+   Probed: skipping the individual methods does not gate the crashing phase
+   (annotation application is not per-method-gated); skipping the classes
+   does. `-AskipDefs` (anchored: `^(dev\.hardwood\.reader\.ColumnReader|...)$`,
+   because the checker matches the pattern with `Matcher.find()` and an
+   unanchored pattern would also skip longer matching class names) covers the
+   three classes with that construct — `dev.hardwood.reader.ColumnReader`,
    `dev.hardwood.reader.SelectionEngine`,
    `dev.hardwood.internal.reader.FlyweightFormatter` — and nothing else.
    Upstream fix required; until then these classes stay runtime-checked.
@@ -46,11 +58,16 @@ with a standalone javac before being committed:
 `-AskipUses` excludes the four optional codec dependencies (snappy, zstd-jni,
 lz4, brotli4j), which are unannotated third-party jars.
 
+One operational trap: the profile compiles into the default `target/classes`,
+so a `-Pcheckerframework` run after an unchanged plain compile recompiles
+nothing and checks nothing (still a green build). Start a measuring run from
+`clean`, or change a source first.
+
 ## Measurements
 
 Wall clock for `clean compile` of `core` (`-pl core`, tests skipped where
 permitted), two repetitions each on a warm build cache, plus one cold-cache
-profile run from the first wiring attempt:
+profile run:
 
 | Configuration | Rep 1 | Rep 2 |
 | --- | --- | --- |
@@ -63,11 +80,21 @@ Cold-cache profile run: 296 s. Overhead against `-Dquick` is roughly **14x**
 warm; against the default build roughly **8x**. Error Prone coexistence costs
 nothing measurable: the combined run is indistinguishable from the
 Checker-Framework-only run, and the warning count is identical (2,825), so
-neither tool interferes with the other.
+neither tool interferes with the other. One caveat seen later on the sibling
+spike branch: when Error Prone reports an *error* in the same javac run, the
+Checker Framework's warnings are not printed at all — a combined CI job shows
+no CF findings on any build that also fails an EP check.
 
 ## Warning inventory
 
-2,825 diagnostics under `-Awarns` across `core` main sources:
+2,825 diagnostics under `-Awarns` across `core` main sources (2,812 after the
+guard stage). Later whole-module counts in
+[_designs/DISCUSSION_CF_AS_TYPE_SYSTEM.md](_designs/DISCUSSION_CF_AS_TYPE_SYSTEM.md)
+were taken after the Error Prone baseline landed, when the qa profile's eleven
+WARN checks emitted 116 warnings in the same compile; those logs read 2,928
+baseline / 2,871 chain-closed, of which the CF-only figures are 2,812 and
+2,755. The eleven WARN checks now live in the opt-in `error-prone-warnings`
+profile, so profile counts from that point on are CF-only.
 
 | Key | Count |
 | --- | --- |
@@ -98,18 +125,24 @@ Highest-count files: `internal/reader/FlatRowReader` (179),
 `internal/reader/NestedLevelComputer` (76), `internal/reader/BinaryBatchValues`
 (75), `internal/reader/VariantShredReassembler` (68).
 
-The reader/batch layer (`internal/reader/*`, the prior note's pilot classes)
-outnumbers the decode layer (`internal/encoding/*`) roughly 2:1 in raw
-warning count — consistent with the prior note's identification of
+The reader/batch layer (`internal/reader/*`, the discussion doc's pilot
+classes) outnumbers the decode layer (`internal/encoding/*`) roughly 2:1 in
+raw warning count — consistent with the discussion doc's identification of
 `ProjectedSchema`/`ColumnBatch`/`RecordShredder`/`NestedBatchIndex` as the
 highest-value adoption targets.
 
 ## Known limits
 
-- **Element-wise array validity is inexpressible.** No qualifier states "every
-  element of `int[] indices` is a valid index for `dict`". The dictionary-index
-  guard therefore lives at runtime, with the comparison inline at each access
-  site (intra-method dataflow refinement), not in a batch-level helper.
+- **Element-wise array qualifiers are position-sensitive.** The element form
+  `@IndexFor("dict") int[] indices` is accepted and proves `dict[indices[i]]`
+  for field-to-field relations; the array form
+  `int @IndexFor("dict") [] indices` annotates the array itself, checks
+  nothing, and is silently tolerated under `-Awarns` (`anno.on.irrelevant`).
+  `ProjectedSchema`'s mapping invariant uses the element form. What the
+  checker still cannot do is lift element-wise writes in a constructor loop
+  into the element qualifier, so the mapping-array build sites keep boundary
+  checks — this, not an expressiveness wall, is the residual warning mass in
+  `ProjectedSchema`.
 - **ByteBuffer and MemorySegment are unchecked.** Neither appears in the
   annotated JDK embedded in `checker-4.2.3.jar`; the Thrift reader, the
   ByteBuffer-viewed RLE reads, and the FFM code stay runtime-validated.
@@ -132,7 +165,7 @@ after the change: zero `[...dict...]`-related warnings remain in the file
 (100 → 89 warnings, and every one of the 89 is a different invariant — see
 below).
 
-Two deviations from the reviewed plan, both discovered during implementation:
+Two placement decisions, each probed before it was committed:
 
 1. **Guard placement.** The plan put comparisons inside the
    `simd/ScalarOperations` apply loops. `VectorOperations` — the java22
@@ -146,16 +179,16 @@ Two deviations from the reviewed plan, both discovered during implementation:
    vector loops.
 2. **No annotations, no checker-qual dependency.** The guards alone drove
    every dictionary-access warning out, so the target of zero annotations was
-   met without any qualifier, and the planned `checker-qual` `provided`
-   dependency was not needed.
+   met without any qualifier, and no dependency was needed at this stage.
+   (The project-level `checker-qual` dependency arrived later, with the pilot
+   annotations.)
 
 Residual warnings in `RleBitPackingHybridDecoder.java` (89) are unrelated
 invariants: parallel-array length relations (`@LTLengthOf("output")` does not
 imply `@LTLengthOf("defLevels")` without `@SameLen` plumbing through every
 caller), count non-negativity, and the `sourceFor` padding arithmetic. Proving
-those requires annotations propagating through caller contracts — the
-"difficult static proof" the prior adoption note says to decline in favor of
-the existing runtime invariant.
+those requires annotations propagating through caller contracts — a proof the
+spike declines in favor of the existing runtime invariant.
 
 ### DELTA byte-array lengths and prefixes (DeltaLengthByteArrayDecoder, DeltaByteArrayDecoder)
 
@@ -193,36 +226,40 @@ should re-run `mvn verify` before merge.
 
 ## Verdict
 
-**Adopt the Checker Framework as an opt-in CI instrument, and proceed with
-the prior adoption note's pilot classes before any wholesale gating.** The
+**Adopt the Checker Framework as an opt-in CI instrument, and proceed with the
+pilot classes named in the discussion doc before any wholesale gating.** The
 spike's evidence:
 
 - The guard stages delivered three controlled-exception fixes (dictionary
   indices, DELTA lengths, DELTA prefixes) for crash classes reachable from
   malformed files, and the checker then proved every guarded access — with
-  **zero annotations** in all three decoder classes. That is exactly the
-  annotation-locality and idiomatic-simplicity character the prior note's
-  exit criteria (§18C/D, §20) demand.
+  **zero annotations** in all three decoder classes. Zero annotation at the
+  point of proof is the character that makes adoption worth extending.
 - Coexistence with Error Prone is free (identical wall clock and warning
   count in the combined run; both visible in one javac invocation).
 - The cost profile is acceptable only CI-side: 8-14x compile overhead, three
   classes skipped over the upstream `BINDING_VARIABLE` crash, and a
-  diagnostics inventory where the largest mass (parallel-array relations in
-  the reader/batch layer, ~2:1 over the decode layer) is inexpressible
-  without `@SameLen`/`@IndexFor` propagation through caller contracts — the
-  shape §20 says to decline.
+  diagnostics inventory whose largest mass (parallel-array relations in the
+  reader/batch layer, ~2:1 over the decode layer) needs `@SameLen`/
+  `@IndexFor` propagation through caller contracts — the shape to decline for
+  wholesale gating.
 
 Accordingly: gate nothing wholesale yet. The follow-up sequence the verdict
-names (each its own issue, out of scope here):
+names:
 
-1. Prior note's Error Prone baseline + `NoUnsafeIntegralNarrowing` check
-   (its §14-15) — cheap, immediate.
-2. Prior note's CF pilots on `ProjectedSchema`/`ColumnBatch`/
-   `RecordShredder`/`NestedBatchIndex` (its §5-8), with method-level
-   `@IndexFor`/`@IndexOrLow` contracts at access sites — the element-wise
-   array annotation its §5 sketches is inexpressible and should not be
-   planned around.
+1. Error Prone baseline + `NoUnsafeIntegralNarrowing` check — done;
+   see Experiment 1 in
+   [_designs/DISCUSSION_CF_AS_TYPE_SYSTEM.md](_designs/DISCUSSION_CF_AS_TYPE_SYSTEM.md).
+2. CF pilots on `ProjectedSchema`/`ColumnBatch`/`RecordShredder`/
+   `NestedBatchIndex` plus their cursor layer — done; see Experiments 2 and
+   2b in the discussion doc. Element-position array qualifiers work (see
+   Known limits); they are part of the shipped pilot annotations.
 3. Upstream the `ElementAnnotationApplier` binding-variable crash
    (typetools/checker-framework), then lift this profile's `-AskipDefs`.
+   Re-test on the review round: removing the skip list fails the compile with
+   the crash against `ColumnReader.java:367` (`values instanceof int[] a`,
+   see profile shape item 3), so the skip is still required; the exact
+   javac error line and stack are recorded in the discussion ledger.
 4. A CI job running `-Pcheckerframework` warnings-only on `core`, trended
-   against the 2,812 baseline recorded here.
+   against the CF-only baseline (2,812 here; 2,755 at chain closure —
+   the discussion doc's counting note explains the difference).

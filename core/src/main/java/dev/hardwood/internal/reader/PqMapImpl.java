@@ -19,6 +19,8 @@ import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 
+import org.checkerframework.checker.index.qual.IndexOrLow;
+
 import dev.hardwood.internal.variant.PqVariantImpl;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.row.PqInterval;
@@ -374,8 +376,12 @@ final class PqMapImpl implements PqMap {
     }
 
     /// The map's value column as a column index of this batch, or -1 when the
-    /// value child is not projected (a key-only map). Callers decide how -1 reads.
-    private int valueColumn() {
+    /// value child is not projected (a key-only map). Callers decide how -1
+    /// reads, and a `< 0` guard refines the value to a plain column index.
+    /// Trusted conversion, same invariant as [NestedBatchIndex#refineProjCol]:
+    /// the descriptor and the batch are built from the same ProjectedSchema.
+    @SuppressWarnings("index")
+    @IndexOrLow("batch.valueCounts") int valueColumn() {
         return mapDesc.valueProjCol();
     }
 

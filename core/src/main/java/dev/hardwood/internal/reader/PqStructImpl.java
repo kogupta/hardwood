@@ -583,6 +583,8 @@ final class PqStructImpl implements PqStruct {
         // the leaf position. In position mode, `valueIndex` is a rep-level ordinal
         // at the struct's level, so chase through the leaf column's multi-level
         // offsets to reach the leaf position for this struct instance.
+        // Descriptors are only built for projected fields, so `firstLeafProjCol()`
+        // is -1 here only if that invariant breaks; the guard is defensive.
         int leafCol = batch.refineProjCol(structDesc.firstLeafProjCol());
         if (leafCol < 0) {
             return false;
