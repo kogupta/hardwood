@@ -343,6 +343,13 @@ outer dimension; they are documented residuals, not regressions. Full core
 suite green throughout (13,997 tests after the review round; 13,994 at chain
 closure).
 
+After the branch-review round (trusted conversion for `refineProjCol` and
+`valueColumn`, element-form `ProjectedSchema` qualifiers, refine-once
+hoists), the CF-only whole-module count is **2,767**: still below the
+2,812 pre-pilot baseline, +12 against chain closure, of which +9 are
+pre-existing `argument` warnings in `PqMapImpl` the old throwing bridge
+incidentally discharged. That 2,767 is the current trend instrument.
+
 ## Costs, honestly
 
 - 8–14× compile overhead on `core` under the profile (opt-in; default builds
