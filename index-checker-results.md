@@ -9,6 +9,8 @@ Design: [_designs/INDEX_CHECKER.md](_designs/INDEX_CHECKER.md).
 
 ## Tooling (verified)
 
+- The profile compiles into `target/index-check`. Sharing `target/classes` let a plain build mark the classes up to date, and `-Pindex-check` then reported "Nothing to compile" and checked nothing. Every result recorded before this fix followed a source edit, so the checker did run for them.
+
 - Checker Framework 4.2.3 (`checker`, `checker-qual`) from Maven Central.
 - Runs on JDK 21 and JDK 25 `javac` (container JDK 25: Ubuntu `openjdk-25-jdk-headless` 25.0.4.1).
 - Needs the `--add-exports`/`--add-opens` flags for `jdk.compiler` that `.mvn/jvm.config` already sets for Error Prone.
@@ -63,7 +65,24 @@ Each item: annotate the path from the boundary, delete the re-check, run the che
   - The annotations add 0 errors. `ParquetFileReader` joins the checked set; its one error was a Value Checker false positive on the `switch` in `matches` (`found @BoolVal(false), required @BoolVal(true)`), suppressed with `@SuppressWarnings("value")` and a comment.
   - Canaries: deleting the public `if (skip < 0) throw` in `skip(long)` fails the build (`[assignment] found: long, required: @NonNegative long`), so the boundary check is now load-bearing for compilation. Dropping `@NonNegative` from the field fails at the `buildRowReader` call.
   - `RowGroupIterator` stays out of the checked set. Sound anyway: its parameter annotations are enforced at every call from a checked class, and `ParquetFileReader` is the only production caller. Its 15 errors are projected-column indexing (`plans[projectedColumnIndex]`, `touched.set(toOriginalIndex(…))`, arrays sized by `getProjectedColumnCount()` / `getColumnCount()`, `nextSetBit` indexes into `fileOrdinals`). Clearing them pulls in `ProjectedSchema` (15 errors) and the public `FileSchema` (4): the index-space work below, not this item.
-- [ ] Trace remaining candidates: `BatchSizing:100`, `PageInfo:74`, `ByteArrayBuilder:35, 91`, `MergePlan:32`, `BoundsReadability:93`, `RowRanges:46`, `SequentialFetchPlan:152`, `ResolvedPredicate:307`, `RleBitPackingHybridEncoder:56`, `BitPacker:31`, `FileMetadataCache:140`.
+- [x] Trace remaining candidates. None converted; each stays for the reason given.
+
+  | Check | Outcome | Reason |
+  |---|---|---|
+  | `BatchSizing:100` `availableRows < 0` | Stays | Derived from `RowGroup.numRows`, a component of a public record any caller can construct. The public record is the boundary. |
+  | `PageInfo:74` `numValues <= 0` | Stays | A page header may declare `num_values = 0`; the check guards file bytes. |
+  | `ByteArrayBuilder:35` capacity `< 0` | Stays (cost) | Provable: callers pass `32` or a clamp to `[512, 65536]`. Enforcing it needs `ColumnChunkBuffer` (22 errors) in the checked set. |
+  | `ByteArrayBuilder:91` `reserve` length `< 0` | Stays | Lengths are products (`Math.multiplyExact`), which the checker does not bound. |
+  | `MergePlan:32` `projectedIndex < 0` | Stays | One caller takes the index from an `Integer` map key, which carries no facts. A projected-index fact: see index spaces. |
+  | `BoundsReadability:93` | Stays | The index arrives through a JDK functional interface, whose parameter cannot carry a qualifier. |
+  | `RowRanges:46` | Stays | Only `start >= 0` is provable; `start < end` relates a skip to a row count. |
+  | `SequentialFetchPlan:152` | Stays | Positive only when the mask is non-trivial; a conditional fact has no qualifier. |
+  | `ResolvedPredicate:307` | Stays | `definitionLevel <= leafDefinitionLevel` is a schema-tree fact read from public `SchemaNode`s. |
+  | `RleBitPackingHybridEncoder:56` bit width | Stays (cost) | Provable as `@IntRange(from = 0, to = 32)` from `LevelEncoder.bitWidth` (`32 - numberOfLeadingZeros`). Enforcing it needs `ColumnChunkBuffer` (22), `RleBitPackingHybridEncoder` (10) and `LevelEncoder` (2) clean. |
+  | `BitPacker:31` bit width | Stays (cost) | Same as above plus `DeltaBinaryPackedEncoder` (23). The divisibility half is not an index fact. |
+  | `FileMetadataCache:140` | Stays | "Not found" branch, not validation. |
+
+  The costly ones fail on mutable buffer cursors: a growable `byte[]` with a `length` field, and a counter that reaches the array length for one statement before resetting. The checker cannot state "below the length at method entry", so these need suppressions, around 34 of them to delete one three-line check.
 - [ ] Classes on the paths above not yet in the checked set: `ThriftCompactReader` (12 errors), `Dictionary` (17), `RowGroupIterator` (15), `BatchSizing` (1). In the set: `DictionaryPageHeader`, `DictionaryPageHeaderReader`, `DictionaryParser`, `ParquetFileReader`.
 - [x] `index-check` profile in `core/pom.xml`; `checker-framework.version` in the parent POM; `checker-qual` as `provided`. Run: `./mvnw -pl core -am -Pindex-check install -DskipITs` (52 s with Error Prone and unit tests, vs 63 s baseline run earlier; within noise). `.mvn/jvm.config` flags suffice; nothing extra needed for Maven.
 - [ ] Full `./mvnw verify` on JDK 25 before pushing. numValues change: all modules pass except the Docker-based S3 ITs (`Could not find a valid Docker environment`; no Docker in this container). `-rf :hardwood-s3 -DskipITs` passes; core unit tests 13,890 run, 0 failures. Keep open: the S3 ITs have not run.

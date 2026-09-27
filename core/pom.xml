@@ -233,6 +233,10 @@
         <index-check.classes>^dev\.hardwood\.(internal\.metadata\.DictionaryPageHeader|internal\.thrift\.DictionaryPageHeaderReader|internal\.reader\.DictionaryParser|reader\.ParquetFileReader)(\..*)?$</index-check.classes>
       </properties>
       <build>
+        <!-- Classes compiled without the checker count as up to date to the compiler plugin,
+             which would then skip the checked compilation. A directory of its own keeps a
+             plain build from ever standing in for a checked one. -->
+        <directory>${project.basedir}/target/index-check</directory>
         <plugins>
           <plugin>
             <groupId>org.apache.maven.plugins</groupId>

@@ -28,7 +28,7 @@ A boundary check stays a runtime check. An internal check whose only job is to p
 
 The types come from the Checker Framework Index Checker (`org.checkerframework:checker`), which also runs the Constant Value Checker. The qualifiers come from `org.checkerframework:checker-qual`, a `provided` dependency of `hardwood-core`: the annotations have no run-time role.
 
-The `index-check` Maven profile of `hardwood-core` runs the Index Checker during main compilation. It checks the classes named by the `index-check.classes` property (a regular expression passed as `-AonlyDefs`). Every class in that set compiles with zero index errors. A class joins the set when all of its index errors are resolved; it never joins with errors outstanding.
+The `index-check` Maven profile of `hardwood-core` runs the Index Checker during main compilation. It checks the classes named by the `index-check.classes` property (a regular expression passed as `-AonlyDefs`). The profile compiles into `target/index-check`, apart from the plain build's output: the compiler plugin skips sources it considers up to date, so sharing `target/classes` would let an unchecked compilation stand in for a checked one. Every class in that set compiles with zero index errors. A class joins the set when all of its index errors are resolved; it never joins with errors outstanding.
 
 The Index Checker runs in the same `javac` invocation as Error Prone. An Error Prone error stops the compilation before the Index Checker reports, so Error Prone findings are fixed first.
 
