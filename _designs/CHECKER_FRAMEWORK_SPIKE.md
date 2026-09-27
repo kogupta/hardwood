@@ -118,6 +118,45 @@ highest-value adoption targets.
 - **No arithmetic-overflow checking in the Index type system** (manual's own
   caveat); the Value Checker's range arithmetic covers what it can infer.
 
+## Guard stage results
+
+### Dictionary indices (RleBitPackingHybridDecoder)
+
+Out-of-range dictionary indices now throw `ParquetReadException`
+("Invalid dictionary index N at position P: dictionary has L entries") at the
+point of use, pinned by `RleBitPackingHybridDecoderDictionaryBoundsTest`
+(six cases: null and non-null definition levels, the `index == length`
+boundary, byte-array dictionaries, first-failing-position reporting, and a
+happy-path control). All dictionary accesses in the decoder are checker-proven
+after the change: zero `[...dict...]`-related warnings remain in the file
+(100 → 89 warnings, and every one of the 89 is a different invariant — see
+below).
+
+Two deviations from the reviewed plan, both discovered during implementation:
+
+1. **Guard placement.** The plan put comparisons inside the
+   `simd/ScalarOperations` apply loops. `VectorOperations` — the java22
+   multi-release twin with its own scalar fallbacks and vectorized gathers —
+   feeds from the same dispatch and was not covered by that wording; guarding
+   inside it would duplicate the check into vector API code. Instead the
+   non-null branches check inline at each access (intra-method, so the
+   checker proves them), and the `defLevels == null` branches validate the
+   batch once before the SIMD dispatch — one choke point covering every
+   implementation behind `SimdOperations`, with no branches added to the hot
+   vector loops.
+2. **No annotations, no checker-qual dependency.** The guards alone drove
+   every dictionary-access warning out, so the target of zero annotations was
+   met without any qualifier, and the planned `checker-qual` `provided`
+   dependency was not needed.
+
+Residual warnings in `RleBitPackingHybridDecoder.java` (89) are unrelated
+invariants: parallel-array length relations (`@LTLengthOf("output")` does not
+imply `@LTLengthOf("defLevels")` without `@SameLen` plumbing through every
+caller), count non-negativity, and the `sourceFor` padding arithmetic. Proving
+those requires annotations propagating through caller contracts — the
+"difficult static proof" the prior adoption note says to decline in favor of
+the existing runtime invariant.
+
 ## Remaining spike stages
 
 Guard stages (dictionary indices, DELTA byte-array lengths/prefixes) and the

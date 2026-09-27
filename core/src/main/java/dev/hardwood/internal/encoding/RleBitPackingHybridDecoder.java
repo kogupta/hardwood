@@ -13,6 +13,7 @@ import java.util.Arrays;
 
 import dev.hardwood.internal.encoding.simd.SimdOperations;
 import dev.hardwood.internal.encoding.simd.VectorSupport;
+import dev.hardwood.reader.ParquetReadException;
 
 /// Decoder for RLE/Bit-Packing Hybrid encoding.
 /// Used primarily for definition/repetition levels and dictionary indices.
@@ -165,15 +166,38 @@ public class RleBitPackingHybridDecoder {
         return buf;
     }
 
+    /// Validates a batch of decoded dictionary indices before handing them to
+    /// the SIMD dispatch, whose scalar and vector paths both index `dict`
+    /// directly. One pass here covers every implementation behind
+    /// [SimdOperations].
+    private static void checkDictionaryIndices(int[] indices, int count, int dictLength) {
+        for (int i = 0; i < count; i++) {
+            int d = indices[i];
+            if (d < 0 || d >= dictLength) {
+                throw dictionaryIndexOutOfRange(d, i, dictLength);
+            }
+        }
+    }
+
+    private static ParquetReadException dictionaryIndexOutOfRange(int index, int position, int dictLength) {
+        return new ParquetReadException("Invalid dictionary index " + index + " at position " + position
+                + ": dictionary has " + dictLength + " entries");
+    }
+
     private void applyDictionary(long[] output, long[] dict, int[] indices, int[] defLevels, int maxDef) {
         if (defLevels == null) {
+            checkDictionaryIndices(indices, output.length, dict.length);
             SIMD_OPS.applyDictionaryLongs(output, dict, indices, output.length);
         }
         else {
             int idx = 0;
             for (int i = 0; i < output.length; i++) {
                 if (defLevels[i] == maxDef) {
-                    output[i] = dict[indices[idx++]];
+                    int d = indices[idx++];
+                    if (d < 0 || d >= dict.length) {
+                        throw dictionaryIndexOutOfRange(d, i, dict.length);
+                    }
+                    output[i] = dict[d];
                 }
             }
         }
@@ -181,13 +205,18 @@ public class RleBitPackingHybridDecoder {
 
     private void applyDictionary(double[] output, double[] dict, int[] indices, int[] defLevels, int maxDef) {
         if (defLevels == null) {
+            checkDictionaryIndices(indices, output.length, dict.length);
             SIMD_OPS.applyDictionaryDoubles(output, dict, indices, output.length);
         }
         else {
             int idx = 0;
             for (int i = 0; i < output.length; i++) {
                 if (defLevels[i] == maxDef) {
-                    output[i] = dict[indices[idx++]];
+                    int d = indices[idx++];
+                    if (d < 0 || d >= dict.length) {
+                        throw dictionaryIndexOutOfRange(d, i, dict.length);
+                    }
+                    output[i] = dict[d];
                 }
             }
         }
@@ -195,13 +224,18 @@ public class RleBitPackingHybridDecoder {
 
     private void applyDictionary(int[] output, int[] dict, int[] indices, int[] defLevels, int maxDef) {
         if (defLevels == null) {
+            checkDictionaryIndices(indices, output.length, dict.length);
             SIMD_OPS.applyDictionaryInts(output, dict, indices, output.length);
         }
         else {
             int idx = 0;
             for (int i = 0; i < output.length; i++) {
                 if (defLevels[i] == maxDef) {
-                    output[i] = dict[indices[idx++]];
+                    int d = indices[idx++];
+                    if (d < 0 || d >= dict.length) {
+                        throw dictionaryIndexOutOfRange(d, i, dict.length);
+                    }
+                    output[i] = dict[d];
                 }
             }
         }
@@ -209,13 +243,18 @@ public class RleBitPackingHybridDecoder {
 
     private void applyDictionary(float[] output, float[] dict, int[] indices, int[] defLevels, int maxDef) {
         if (defLevels == null) {
+            checkDictionaryIndices(indices, output.length, dict.length);
             SIMD_OPS.applyDictionaryFloats(output, dict, indices, output.length);
         }
         else {
             int idx = 0;
             for (int i = 0; i < output.length; i++) {
                 if (defLevels[i] == maxDef) {
-                    output[i] = dict[indices[idx++]];
+                    int d = indices[idx++];
+                    if (d < 0 || d >= dict.length) {
+                        throw dictionaryIndexOutOfRange(d, i, dict.length);
+                    }
+                    output[i] = dict[d];
                 }
             }
         }
@@ -226,6 +265,9 @@ public class RleBitPackingHybridDecoder {
         if (defLevels == null) {
             for (int i = 0; i < output.length; i++) {
                 int d = indices[i];
+                if (d < 0 || d >= dict.length) {
+                    throw dictionaryIndexOutOfRange(d, i, dict.length);
+                }
                 output[i] = dict[d];
                 outDictIndices[i] = d;
             }
@@ -235,6 +277,9 @@ public class RleBitPackingHybridDecoder {
             for (int i = 0; i < output.length; i++) {
                 if (defLevels[i] == maxDef) {
                     int d = indices[idx++];
+                    if (d < 0 || d >= dict.length) {
+                        throw dictionaryIndexOutOfRange(d, i, dict.length);
+                    }
                     output[i] = dict[d];
                     outDictIndices[i] = d;
                 }
