@@ -23,12 +23,6 @@
   <description>Core Parquet reader implementation</description>
   <url>https://hardwood.dev/</url>
 
-  <properties>
-    <!-- #1283 spike. Referenced only by the checkerframework profile below,
-         from both its provided checker-qual dependency and its processor paths. -->
-    <checker-framework.version>4.2.3</checker-framework.version>
-  </properties>
-
   <scm>
     <connection>scm:git:git://github.com/hardwood-hq/hardwood.git</connection>
     <developerConnection>scm:git:git@github.com:hardwood-hq/hardwood.git</developerConnection>
@@ -299,7 +293,7 @@
                          classes below are the only ones with that construct; the
                          rest of the module stays checked. Recorded in
                          _designs/CHECKER_FRAMEWORK_SPIKE.md. -->
-                    <arg>-AskipDefs=dev\.hardwood\.reader\.ColumnReader|dev\.hardwood\.reader\.SelectionEngine|dev\.hardwood\.internal\.reader\.FlyweightFormatter</arg>
+                    <arg>-AskipDefs=^(dev\.hardwood\.reader\.ColumnReader|dev\.hardwood\.reader\.SelectionEngine|dev\.hardwood\.internal\.reader\.FlyweightFormatter)$</arg>
                     <arg>-Xmaxwarns</arg>
                     <arg>100000</arg>
                   </compilerArgs>

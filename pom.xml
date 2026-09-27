@@ -65,6 +65,7 @@
 
   <properties>
     <auto-service.version>1.1.1</auto-service.version>
+    <checker-framework.version>4.2.3</checker-framework.version>
     <error-prone.version>2.49.0</error-prone.version>
     <hadoop.version>3.4.3</hadoop.version>
     <japicmp.newVersion>${project.version}</japicmp.newVersion>
@@ -390,7 +391,7 @@
               <compilerArgs combine.children="append">
                 <arg>-XDcompilePolicy=simple</arg>
                 <arg>--should-stop=ifError=FLOW</arg>
-                <arg>-Xplugin:ErrorProne -XepDisableAllChecks -Xep:NoVar:ERROR -Xep:NoLegacyJavadoc:ERROR -Xep:NoUnsafeIntegralNarrowing:WARN -Xep:IntLongMath:WARN -Xep:ConstantOverflow:WARN -Xep:BadShiftAmount:WARN -Xep:ArrayEquals:WARN -Xep:CollectionIncompatibleType:WARN -Xep:ReturnValueIgnored:WARN -Xep:FutureReturnValueIgnored:WARN -Xep:InterruptedExceptionSwallowed:WARN -Xep:MissingCasesInEnumSwitch:WARN -Xep:ComparisonOutOfRange:WARN</arg>
+                <arg>-Xplugin:ErrorProne -XepDisableAllChecks -Xep:NoVar:ERROR -Xep:NoLegacyJavadoc:ERROR</arg>
                 <arg>-XDaddTypeAnnotationsToSymbol=true</arg>
               </compilerArgs>
               <annotationProcessorPaths combine.children="append">
@@ -580,6 +581,37 @@
                 </configuration>
               </execution>
             </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+    <!-- Opt-in Error Prone warning checks. The qa profile (active unless -Dquick)
+         loads the Error Prone plugin and its -XepDisableAllChecks baseline; this
+         profile only appends WARN severities and must be used together with it.
+         A check promotes to qa at ERROR once its known escapes carry
+         suppressions; see _designs/DISCUSSION_CF_AS_TYPE_SYSTEM.md. -->
+    <profile>
+      <id>error-prone-warnings</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-compiler-plugin</artifactId>
+            <configuration>
+              <compilerArgs combine.children="append">
+                <arg>-Xep:NoUnsafeIntegralNarrowing:WARN</arg>
+                <arg>-Xep:IntLongMath:WARN</arg>
+                <arg>-Xep:ConstantOverflow:WARN</arg>
+                <arg>-Xep:BadShiftAmount:WARN</arg>
+                <arg>-Xep:ArrayEquals:WARN</arg>
+                <arg>-Xep:CollectionIncompatibleType:WARN</arg>
+                <arg>-Xep:ReturnValueIgnored:WARN</arg>
+                <arg>-Xep:FutureReturnValueIgnored:WARN</arg>
+                <arg>-Xep:InterruptedExceptionSwallowed:WARN</arg>
+                <arg>-Xep:MissingCasesInEnumSwitch:WARN</arg>
+                <arg>-Xep:ComparisonOutOfRange:WARN</arg>
+              </compilerArgs>
+            </configuration>
           </plugin>
         </plugins>
       </build>

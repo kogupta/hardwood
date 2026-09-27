@@ -40,8 +40,8 @@ public final class ProjectedSchema {
     /// valid index into `projectedToOriginal` or the `-1` sentinel. The accessors below
     /// make callers see exactly that: a value read from `toProjectedIndex` cannot be used
     /// to index a projected array until a `>= 0` check refines it.
-    private final int @IndexFor("originalToProjected") [] projectedToOriginal;   // projected index -> original index
-    private final int @IndexOrLow("projectedToOriginal") [] originalToProjected; // original index -> projected index (-1 if not projected)
+    private final @IndexFor("originalToProjected") int[] projectedToOriginal;   // projected index -> original index
+    private final @IndexOrLow("projectedToOriginal") int[] originalToProjected; // original index -> projected index (-1 if not projected)
     private final List<ColumnSchema> projectedColumns;
     private final int[] projectedFieldIndices; // indices of projected top-level fields in root children
     /// How many leading projected columns a reader exposes. Equal to the projected column
@@ -53,16 +53,16 @@ public final class ProjectedSchema {
     private final int exposedFieldCount;
 
     private ProjectedSchema(FileSchema originalSchema,
-                            int @IndexFor("originalToProjected") [] projectedToOriginal,
-                            int @IndexOrLow("projectedToOriginal") [] originalToProjected, List<ColumnSchema> projectedColumns,
+                            @IndexFor("originalToProjected") int[] projectedToOriginal,
+                            @IndexOrLow("projectedToOriginal") int[] originalToProjected, List<ColumnSchema> projectedColumns,
                             int[] projectedFieldIndices) {
         this(originalSchema, projectedToOriginal, originalToProjected, projectedColumns, projectedFieldIndices,
                 projectedToOriginal.length, projectedFieldIndices.length);
     }
 
     private ProjectedSchema(FileSchema originalSchema,
-                            int @IndexFor("originalToProjected") [] projectedToOriginal,
-                            int @IndexOrLow("projectedToOriginal") [] originalToProjected, List<ColumnSchema> projectedColumns,
+                            @IndexFor("originalToProjected") int[] projectedToOriginal,
+                            @IndexOrLow("projectedToOriginal") int[] originalToProjected, List<ColumnSchema> projectedColumns,
                             int[] projectedFieldIndices, int exposedColumnCount, int exposedFieldCount) {
         this.originalSchema = originalSchema;
         this.projectedToOriginal = projectedToOriginal;

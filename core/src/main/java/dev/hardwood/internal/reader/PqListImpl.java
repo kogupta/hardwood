@@ -524,17 +524,19 @@ final class PqListImpl implements PqList {
     private boolean isStructElementNull(TopLevelFieldMap.FieldDesc.Struct structDesc, int valueIdx) {
         int primCol = structDesc.firstPrimitiveCol();
         if (primCol >= 0) {
-            int defLevel = batch.getDefLevel(primCol, valueIdx);
+            int col = batch.refineProjCol(primCol);
+            int defLevel = batch.getDefLevel(col, valueIdx);
             return defLevel < structDesc.schema().maxDefinitionLevel();
         }
         // Struct has no direct primitive child; fall back to the first leaf at any
         // depth. In leaf mode (subLevel < 0) `valueIdx` is already a leaf position
         // in that leaf column. In nested mode it is a rep-level ordinal at the
         // struct's level; chase through the leaf column's multi-level offsets.
-        int leafCol = structDesc.firstLeafProjCol();
-        if (leafCol < 0) {
+        int rawLeafCol = structDesc.firstLeafProjCol();
+        if (rawLeafCol < 0) {
             return false;
         }
+        int leafCol = batch.refineProjCol(rawLeafCol);
         int pos = valueIdx;
         if (subLevel >= 0) {
             int structRep = structDesc.schema().maxRepetitionLevel();

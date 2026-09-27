@@ -373,11 +373,10 @@ final class PqMapImpl implements PqMap {
         return new PqVariantImpl(metadataBytes, value);
     }
 
-    /// The map's value column refined against this batch, or -1 when the value
-    /// child is not projected (a key-only map). Callers decide how -1 reads.
+    /// The map's value column as a column index of this batch, or -1 when the
+    /// value child is not projected (a key-only map). Callers decide how -1 reads.
     private int valueColumn() {
-        int col = mapDesc.valueProjCol();
-        return col < 0 ? -1 : batch.refineProjCol(col);
+        return mapDesc.valueProjCol();
     }
 
     private boolean isValueNullAt(int valueIdx) {

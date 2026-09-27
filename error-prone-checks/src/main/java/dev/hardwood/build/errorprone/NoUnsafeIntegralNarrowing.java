@@ -24,10 +24,12 @@ import com.sun.tools.javac.tree.JCTree.JCPrimitiveTypeTree;
 
 /// Enforces Hardwood's integral-narrowing rule: a `long` may not be cast to a
 /// narrower integral type unless the value is statically known to fit. The
-/// preferred rewrite is `Math.toIntExact(longValue)`; an explicit range check
-/// followed by the cast also qualifies. Where the bound is real but cannot be
-/// expressed, suppress with `@SuppressWarnings("NoUnsafeIntegralNarrowing")`
-/// and a comment stating the bound.
+/// preferred rewrite is `Math.toIntExact(longValue)`. This version recognizes
+/// only compile-time constants (literals, constant fields, and expressions the
+/// compiler folds) as statically fitting; a runtime range check followed by a
+/// cast is still flagged — suppress it with
+/// `@SuppressWarnings("NoUnsafeIntegralNarrowing")` and a comment stating the
+/// bound.
 ///
 /// Scope is deliberately narrow: only casts out of `long` (the file-size /
 /// offset domain in this reader) into `int`, `short`, `char`, or `byte`.
@@ -36,7 +38,7 @@ import com.sun.tools.javac.tree.JCTree.JCPrimitiveTypeTree;
 @AutoService(BugChecker.class)
 @BugPattern(
         name = "NoUnsafeIntegralNarrowing",
-        summary = "Do not cast a long to a narrower integral type; use Math.toIntExact or a proven range check.",
+        summary = "Do not cast a long to a narrower integral type; use Math.toIntExact or make the fit compile-time visible.",
         severity = BugPattern.SeverityLevel.ERROR)
 public final class NoUnsafeIntegralNarrowing extends BugChecker implements BugChecker.TypeCastTreeMatcher {
 

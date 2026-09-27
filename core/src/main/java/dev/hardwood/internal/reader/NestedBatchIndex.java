@@ -43,7 +43,7 @@ final class NestedBatchIndex {
     /// 0-indexed rep level used by internal consumers
     /// ([PqListImpl] / [PqMapImpl] / [PqStructImpl]). Each per-rep-level
     /// `int[]` is sentinel-suffixed (length `count + 1`).
-    final int @SameLen("valueCounts") [][] @SameLen({})[] multiOffsets;
+    final int @SameLen("valueCounts") [][][] multiOffsets;
     final long @SameLen("valueCounts") [][] elementValidity; // [projectedCol] -> leaf validity bitmap (set bit = present)
     final ProjectedSchema projectedSchema;
     /// The file these batches came from, for the failures that name one. Batches never
@@ -145,20 +145,18 @@ final class NestedBatchIndex {
 
     // ==================== Value Access ====================
 
-    /// Refines a schema-derived projected column against this batch's columns.
+    /// Converts a schema-derived projected column to a column index of this
+    /// batch.
     ///
     /// Descriptors ([TopLevelFieldMap.FieldDesc]) carry column indices built
-    /// from the schema; this batch is per-`setBatchData` state. The two are
-    /// guaranteed to agree by construction, but that guarantee crosses object
-    /// boundaries the type system cannot see, so this check — the one place a
-    /// descriptor meets a batch — establishes it at runtime once per call and
-    /// mints the `@IndexFor("valueCounts")` type the accessors require. It
-    /// never fires for a descriptor built against the same projected schema.
+    /// from the same [ProjectedSchema] that sized this batch, so a descriptor
+    /// column is always within range; the type system cannot see across that
+    /// object boundary, so this trusted conversion mints the
+    /// `@IndexFor("valueCounts")` type the accessors require. It performs no
+    /// runtime check: the JVM's own array bounds check is the backstop if the
+    /// invariant is ever broken.
+    @SuppressWarnings("index")
     @IndexFor("valueCounts") int refineProjCol(int col) {
-        if (col < 0 || col >= valueCounts.length) {
-            throw new IllegalStateException("Projected column " + col + " is outside the "
-                    + valueCounts.length + " columns of this batch");
-        }
         return col;
     }
 

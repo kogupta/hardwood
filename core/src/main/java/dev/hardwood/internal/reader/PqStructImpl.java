@@ -547,8 +547,9 @@ final class PqStructImpl implements PqStruct {
     private boolean isFieldNull(TopLevelFieldMap.FieldDesc child) {
         return switch (child) {
             case TopLevelFieldMap.FieldDesc.Primitive p -> {
-                int idx = resolveValueIndex(batch.refineProjCol(p.projectedCol()));
-                yield batch.isElementNull(batch.refineProjCol(p.projectedCol()), idx);
+                int col = batch.refineProjCol(p.projectedCol());
+                int idx = resolveValueIndex(col);
+                yield batch.isElementNull(col, idx);
             }
             case TopLevelFieldMap.FieldDesc.Struct s -> isStructNull(s);
             case TopLevelFieldMap.FieldDesc.ListOf l ->
@@ -560,10 +561,11 @@ final class PqStructImpl implements PqStruct {
     }
 
     private boolean isVariantNull(TopLevelFieldMap.FieldDesc.Variant desc) {
-        int col = desc.metadataCol() >= 0 ? desc.metadataCol() : desc.valueCol();
-        if (col < 0) {
+        int rawCol = desc.metadataCol() >= 0 ? desc.metadataCol() : desc.valueCol();
+        if (rawCol < 0) {
             return true;
         }
+        int col = batch.refineProjCol(rawCol);
         int idx = resolveValueIndex(col);
         int defLevel = batch.getDefLevel(col, idx);
         return defLevel < desc.nullDefLevel();
@@ -603,13 +605,14 @@ final class PqStructImpl implements PqStruct {
     private Object readValueImpl(TopLevelFieldMap.FieldDesc child, boolean decode) {
         return switch (child) {
             case TopLevelFieldMap.FieldDesc.Primitive p -> {
-                int idx = resolveValueIndex(batch.refineProjCol(p.projectedCol()));
-                if (batch.isElementNull(batch.refineProjCol(p.projectedCol()), idx)) {
+                int col = batch.refineProjCol(p.projectedCol());
+                int idx = resolveValueIndex(col);
+                if (batch.isElementNull(col, idx)) {
                     yield null;
                 }
                 yield decode
-                        ? batch.decodeLeaf(batch.refineProjCol(p.projectedCol()), idx, p.schema())
-                        : batch.getValue(batch.refineProjCol(p.projectedCol()), idx);
+                        ? batch.decodeLeaf(col, idx, p.schema())
+                        : batch.getValue(col, idx);
             }
             case TopLevelFieldMap.FieldDesc.Struct s -> {
                 if (isStructNull(s)) {

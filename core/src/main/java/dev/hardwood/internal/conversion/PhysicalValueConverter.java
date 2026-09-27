@@ -55,6 +55,7 @@ public final class PhysicalValueConverter {
     }
 
     /// Days since the Unix epoch, as a `DATE` column's `INT32` stores them.
+    @SuppressWarnings("NoUnsafeIntegralNarrowing") // the range check above proves the fit
     public static int dateToInt(String field, LocalDate value) {
         long epochDay = value.toEpochDay();
         if (epochDay < Integer.MIN_VALUE || epochDay > Integer.MAX_VALUE) {

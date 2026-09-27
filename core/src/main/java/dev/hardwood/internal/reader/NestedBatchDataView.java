@@ -141,8 +141,9 @@ public final class NestedBatchDataView {
     private boolean isFieldNull(TopLevelFieldMap.FieldDesc desc) {
         return switch (desc) {
             case TopLevelFieldMap.FieldDesc.Primitive p -> {
-                int valueIdx = cachedValueIndex[batchIndex.refineProjCol(p.projectedCol())];
-                yield batchIndex.isElementNull(batchIndex.refineProjCol(p.projectedCol()), valueIdx);
+                int col = batchIndex.refineProjCol(p.projectedCol());
+                int valueIdx = cachedValueIndex[col];
+                yield batchIndex.isElementNull(col, valueIdx);
             }
             case TopLevelFieldMap.FieldDesc.Struct s -> isStructNull(s);
             case TopLevelFieldMap.FieldDesc.ListOf l ->
@@ -615,13 +616,14 @@ public final class NestedBatchDataView {
     private Object readValueImpl(TopLevelFieldMap.FieldDesc desc, boolean decode) {
         return switch (desc) {
             case TopLevelFieldMap.FieldDesc.Primitive p -> {
-                int valueIdx = cachedValueIndex[batchIndex.refineProjCol(p.projectedCol())];
-                if (batchIndex.isElementNull(batchIndex.refineProjCol(p.projectedCol()), valueIdx)) {
+                int col = batchIndex.refineProjCol(p.projectedCol());
+                int valueIdx = cachedValueIndex[col];
+                if (batchIndex.isElementNull(col, valueIdx)) {
                     yield null;
                 }
                 yield decode
-                        ? batchIndex.decodeLeaf(batchIndex.refineProjCol(p.projectedCol()), valueIdx, p.schema())
-                        : batchIndex.getValue(batchIndex.refineProjCol(p.projectedCol()), valueIdx);
+                        ? batchIndex.decodeLeaf(col, valueIdx, p.schema())
+                        : batchIndex.getValue(col, valueIdx);
             }
             case TopLevelFieldMap.FieldDesc.Struct s -> {
                 if (isStructNull(s)) {
