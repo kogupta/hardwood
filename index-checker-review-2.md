@@ -55,7 +55,7 @@ The probe sources named below (`Read.java`, `Box.java`, `bad/Bad.java`, `stub/`)
   - Fix, either:
     - (a) run both processors in one invocation: `<annotationProcessors>` with `combine.children="append"`, plus checker-prefixed options. CF 4.2.3 `SourceChecker.createActiveOptions` supports `-A<CheckerSimpleName>_<option>`, e.g. `-AColumnIndexChecker_onlyDefs=…`. Verify that the Index Checker's subcheckers honour the prefix before relying on it.
     - (b) fail fast when both are active, e.g. an enforcer rule, and say in the design that they are exclusive.
-  - **Resolved:** Option (b). An enforcer rule (`one-checker-profile`) fails the build when both are active. Option (a) does not work: with `-AIndexChecker_onlyDefs` the Index Checker's subcheckers ignored the prefix and checked all of core (200+ errors). Documented in the design and notes.
+  - **Resolved:** Option (b). An enforcer rule (`one-checker-profile`) fails the build when both are active. Option (a) would need one prefixed `onlyDefs` for each subchecker of the Index Checker, since each reads only options prefixed with its own name (`-AIndexChecker_onlyDefs` alone left the `LowerBoundChecker` checking all of core, 200+ errors). Documented in the design and notes.
 
 - [x] **The unboxing claim is wrong, and the suppression at `ProjectedSchema.java:149-150` is unnecessary.**
   - Canary: replacing all six `@SuppressWarnings("columnindex")` with `@SuppressWarnings("none")` gives errors at `RowGroupIterator:1526`, `ProjectedSchema:195/196`, `:394`, `:401` and `FileColumnOrdinals:80`, and **none at `ProjectedSchema:150`**.

@@ -24,6 +24,7 @@ import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.tools.columnindex.qual.FileOrdinal;
+import dev.hardwood.tools.columnindex.qual.IndexedBy;
 
 /// Lazily reads and caches a row group's dictionary pages so predicate evaluation can use them to
 /// prove a value absent from a column chunk.
@@ -39,6 +40,7 @@ public final class RowGroupDictionaryFilterSource {
 
     private final InputFile inputFile;
     private final RowGroup rowGroup;
+    @IndexedBy(FileOrdinal.class)
     private final FileSchema fileSchema;
     private final HardwoodContextImpl context;
     private final Dictionary[] dictionaries;
@@ -47,7 +49,8 @@ public final class RowGroupDictionaryFilterSource {
     private final long[] pageEnds;
 
     public RowGroupDictionaryFilterSource(InputFile inputFile, RowGroup rowGroup,
-                                          FileSchema fileSchema, HardwoodContextImpl context) {
+                                          @IndexedBy(FileOrdinal.class) FileSchema fileSchema,
+                                          HardwoodContextImpl context) {
         this.inputFile = inputFile;
         this.rowGroup = rowGroup;
         this.fileSchema = fileSchema;

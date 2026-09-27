@@ -878,16 +878,16 @@ public class RowGroupIterator implements Closeable {
     /// IndexedFetchPlans with a single page group qualify;
     /// SequentialFetchPlans qualify when their chunk size covers the
     /// entire column chunk (`head(N)` truncation may shrink it below).
-    private void coalesceAcrossColumns(FetchPlan[] plans, InputFile inputFile, WorkItem workItem) {
+    private void coalesceAcrossColumns(@IndexedBy(ProjectedIndex.class) FetchPlan[] plans, InputFile inputFile, WorkItem workItem) {
         // Collect (offset, length, plan-index) for each plan's first read.
-        record Entry(int planIndex, long offset, int length) {}
+        record Entry(@ProjectedIndex int planIndex, long offset, int length) {}
         // What each plan left out fetches on its own. A region must not bridge a gap holding
         // any of it, or those bytes would be fetched twice: once in the region, once by the
         // plan's own handles.
         record Extent(long start, long end) {}
         List<Entry> entries = new ArrayList<>(plans.length);
         List<Extent> fetchedAlone = new ArrayList<>();
-        for (int i = 0; i < plans.length; i++) {
+        for (@ProjectedIndex int i = 0; i < plans.length; i++) {
             FetchPlan plan = plans[i];
             if (plan instanceof CoalescableFirstChunk c) {
                 if (c.isCoalesceSafe()) {
@@ -942,6 +942,7 @@ public class RowGroupIterator implements Closeable {
 
         // Build SharedRegions and rewrite each merged plan's first ChunkHandle
         // to slice from the region. Single-entry "regions" are left alone.
+        @IndexedBy(ProjectedIndex.class)
         SharedRegion[] regionsByPlan = new SharedRegion[plans.length];
         SharedRegion previous = null;
         for (List<Entry> group : regionEntries) {
@@ -964,7 +965,7 @@ public class RowGroupIterator implements Closeable {
             }
         }
 
-        for (int i = 0; i < plans.length; i++) {
+        for (@ProjectedIndex int i = 0; i < plans.length; i++) {
             SharedRegion region = regionsByPlan[i];
             if (region == null) {
                 continue;

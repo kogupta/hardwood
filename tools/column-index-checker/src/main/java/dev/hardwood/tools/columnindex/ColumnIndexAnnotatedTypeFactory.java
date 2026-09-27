@@ -12,16 +12,21 @@ import java.util.Set;
 
 import javax.lang.model.element.AnnotationMirror;
 import javax.lang.model.element.Element;
-import javax.lang.model.element.ElementKind;
 
 import org.checkerframework.common.basetype.BaseAnnotatedTypeFactory;
 import org.checkerframework.common.basetype.BaseTypeChecker;
 import org.checkerframework.framework.type.AnnotatedTypeMirror;
 import org.checkerframework.javacutil.AnnotationBuilder;
+import org.checkerframework.javacutil.BugInCF;
 import org.checkerframework.javacutil.TreeUtils;
 
-import com.sun.source.tree.IdentifierTree;
+import com.sun.source.tree.BinaryTree;
+import com.sun.source.tree.ConditionalExpressionTree;
+import com.sun.source.tree.ExpressionTree;
+import com.sun.source.tree.LiteralTree;
 import com.sun.source.tree.Tree;
+import com.sun.source.tree.TypeCastTree;
+import com.sun.source.tree.UnaryTree;
 
 import dev.hardwood.tools.columnindex.qual.ColumnIndexBottom;
 import dev.hardwood.tools.columnindex.qual.ColumnIndexUnknown;
@@ -32,10 +37,12 @@ import dev.hardwood.tools.columnindex.qual.ProjectedIndexOrAbsent;
 
 /// The column-index qualifier hierarchy.
 ///
-/// A local variable that holds only a literal reads as its declared type, not as the literal's
-/// bottom type. A counter such as `for (int i = 0; ...; i++)` therefore belongs to no space
-/// unless its declaration names one, and `for (@ProjectedIndex int p = 0; ...; p++)` reads as a
-/// projected index throughout the loop. A literal written in place still fits every space.
+/// Only a value written as a literal, or computed from literals alone (`-1`, `2 * 3`), fits every
+/// space. A variable that flow analysis knows holds a literal reads as its declared type instead:
+/// a counter such as `for (int i = 0; ...; i++)` belongs to no space unless its declaration names
+/// one, and `for (@ProjectedIndex int p = 0; ...; p++)` reads as a projected index throughout the
+/// loop. The same holds for parameters, fields, named constants, and for `i++` and `--i`, which
+/// read as the declared type of `i`. A conditional reads as the least upper bound of its branches.
 public final class ColumnIndexAnnotatedTypeFactory extends BaseAnnotatedTypeFactory {
 
     private final AnnotationMirror top;
@@ -51,13 +58,68 @@ public final class ColumnIndexAnnotatedTypeFactory extends BaseAnnotatedTypeFact
     @Override
     protected void addComputedTypeAnnotations(Tree tree, AnnotatedTypeMirror type, boolean iUseFlow) {
         super.addComputedTypeAnnotations(tree, type, iUseFlow);
-        if (tree.getKind() == Tree.Kind.IDENTIFIER && type.hasPrimaryAnnotation(bottom)) {
-            Element variable = TreeUtils.elementFromUse((IdentifierTree) tree);
-            if (variable != null && variable.getKind() == ElementKind.LOCAL_VARIABLE) {
-                AnnotationMirror declared = fromElement(variable).getPrimaryAnnotationInHierarchy(top);
-                type.replaceAnnotation(declared == null ? top : declared);
-            }
+        if (type.getKind().isPrimitive() && type.hasPrimaryAnnotation(bottom)
+                && tree instanceof ExpressionTree expression && !isLiteralValue(expression)) {
+            type.replaceAnnotation(valueQualifier(expression));
         }
+    }
+
+    /// Whether `expression` is written with literals and operators alone.
+    private static boolean isLiteralValue(ExpressionTree expression) {
+        ExpressionTree value = TreeUtils.withoutParens(expression);
+        if (value instanceof LiteralTree) {
+            return true;
+        }
+        if (value instanceof BinaryTree binary) {
+            return isLiteralValue(binary.getLeftOperand()) && isLiteralValue(binary.getRightOperand());
+        }
+        if (value instanceof TypeCastTree cast) {
+            return isLiteralValue(cast.getExpression());
+        }
+        return switch (value.getKind()) {
+            case UNARY_MINUS, UNARY_PLUS, BITWISE_COMPLEMENT ->
+                    isLiteralValue(((UnaryTree) value).getExpression());
+            default -> false;
+        };
+    }
+
+    /// The qualifier of a value that flow analysis typed as a literal although it is not written
+    /// as one.
+    private AnnotationMirror valueQualifier(ExpressionTree expression) {
+        ExpressionTree value = TreeUtils.withoutParens(expression);
+        return switch (value.getKind()) {
+            case IDENTIFIER, MEMBER_SELECT -> declaredQualifier(TreeUtils.elementFromTree(value));
+            case PREFIX_INCREMENT, PREFIX_DECREMENT, POSTFIX_INCREMENT, POSTFIX_DECREMENT ->
+                    declaredQualifier(TreeUtils.elementFromTree(((UnaryTree) value).getExpression()));
+            case CONDITIONAL_EXPRESSION -> branchesQualifier((ConditionalExpressionTree) value);
+            default -> top;
+        };
+    }
+
+    private AnnotationMirror declaredQualifier(Element element) {
+        if (element == null || !element.getKind().isVariable()) {
+            return top;
+        }
+        AnnotationMirror declared = fromElement(element).getPrimaryAnnotationInHierarchy(top);
+        return declared == null ? top : declared;
+    }
+
+    private AnnotationMirror branchesQualifier(ConditionalExpressionTree conditional) {
+        AnnotationMirror whenTrue = qualifier(conditional.getTrueExpression());
+        AnnotationMirror whenFalse = qualifier(conditional.getFalseExpression());
+        AnnotationMirror bound = getQualifierHierarchy().leastUpperBoundQualifiersOnly(whenTrue, whenFalse);
+        if (bound == null) {
+            throw new BugInCF("no least upper bound of %s and %s", whenTrue, whenFalse);
+        }
+        return bound;
+    }
+
+    private AnnotationMirror qualifier(ExpressionTree expression) {
+        AnnotationMirror qualifier = getAnnotatedType(expression).getPrimaryAnnotationInHierarchy(top);
+        if (qualifier == null) {
+            throw new BugInCF("no column-index qualifier on %s", expression);
+        }
+        return qualifier;
     }
 
     @Override
