@@ -11,11 +11,14 @@ classes, the Thrift decoder, page-header parsing, anything whose input is the
 file rather than another internal component. Those checks are boundary
 validation and must survive.
 
-Checks *inside* internal classes should go away. In their place, the Checker
-Framework acts as a type system with one narrow job — index arithmetic
-validation — and proves those internal accesses at compile time. An internal
-access the compiler accepts is proven safe; the runtime exception class it
-replaces stops being expressible on paths the type system covers.
+Checks *inside* internal classes should stop being written. In their place,
+the Checker Framework acts as a type system with one narrow job — index
+arithmetic validation — and proves those internal accesses at compile time.
+An internal access the compiler accepts is proven safe; the runtime
+exception class it replaces stops being expressible on paths the type system
+covers. The deletion half of that claim is answered by experiment 3: the
+typed paths carry no redundant internal guards to remove, so the payoff is
+in checks never written and refactors proven, not in deleting existing ones.
 
 Scope discipline: index arithmetic only. Not Nullness, not Optional, not
 regex, not i18n. The moment the scope widens, the annotation cost and the
@@ -49,11 +52,16 @@ compile cost stop being worth it.
 - **Dataflow is intra-method.** Refinement dies at method boundaries. Anything
   cross-method needs the contract on the signature — which is the point of the
   premise, but it means adoption is per-class and per-signature, never free.
-- **Element-wise array validity is inexpressible.** "Every element of this
-  `int[]` is an index into `dict`" cannot be stated in the current qualifier
-  set. The null-definition-levels path needs a batch check before the SIMD
-  dispatch instead of a pure annotation. This is the main expressiveness gap
-  for the dictionary path.
+- **Element-wise array validity cannot be *constructed*, though it can be
+  *stated*.** An element qualifier on a whole array is expressible:
+  `@IndexFor("dict") int[]` states "every element of this array is an index
+  into `dict`", and the ProjectedSchema pilot uses exactly that form. What
+  the current qualifier set cannot do is build such an array by element-wise
+  stores — a constructor loop that guards each element cannot lift the
+  per-element fact into the array's element type (experiment 2, finding 4).
+  The null-definition-levels path therefore keeps a batch check before the
+  SIMD dispatch instead of a pure annotation. This is the main
+  expressiveness gap for the dictionary path.
 - **Sequences are arrays and Strings only.** ByteBuffer and MemorySegment are
   outside the type system; no annotated `ByteBuffer.java` exists in the
   embedded JDK. Thrift/ByteBuffer paths keep runtime validation — which the
@@ -84,7 +92,9 @@ Today's guards in `RleBitPackingHybridDecoder` and the DELTA decoders are the
 seed of this: under the premise, the *internal* half of each guard (the part
 re-checking values an upstream component produced) would be replaced by typed
 signatures, while the boundary parse that reads the value out of the page
-buffer keeps its check and produces a typed value.
+buffer keeps its check and produces a typed value. (Experiment 3 examined
+these guards directly: each is boundary validation or a dataflow refinement
+point, and none is deletable.)
 
 ## Compiler-enforced docs
 
@@ -115,8 +125,10 @@ column-index checker with 42 unit tests and canary files reproducing the
 - `@WithinPage` — an offset/length proven to lie inside the current page
   buffer. Would replace the manual `pos + length` EOF checks with a typed
   value produced once at the boundary.
-- `@DictionaryIndex("dict")`-style pairing — today inexpressible for whole
-  arrays (see gap above), but usable on scalar values.
+- `@DictionaryIndex("dict")`-style pairing — usable today on scalar values,
+  and statable on whole arrays as an element qualifier
+  (`@IndexFor("dict") int[]`); what remains unproven is constructing such an
+  array element-wise (see gap above).
 - `@ValidatedPrefix` / typed DELTA prefix lengths.
 
 The hypothesis: each custom type converts one family of runtime checks into
@@ -349,6 +361,45 @@ hoists), the CF-only whole-module count is **2,767**: still below the
 2,812 pre-pilot baseline, +12 against chain closure, of which +9 are
 pre-existing `argument` warnings in `PqMapImpl` the old throwing bridge
 incidentally discharged. That 2,767 is the current trend instrument.
+
+## Experiment 3 — check-deletion audit (done, 2026-09-27)
+
+The hypothesis the first two experiments never tested: annotate the pilot,
+then delete the internal checks the compiler now proves. The audit inverted
+the question — inventory every runtime guard in the typed subgraph (the four
+pilots, the cursor layer — Pq{List,Map,Struct}Impl, the typed lists,
+NestedBatchDataView, VariantShredReassembler — plus `TopLevelFieldMap` and
+the decode layer), verify provenance against `main`, and classify each one.
+
+Result: **no candidate.** Zero pre-existing defensive guards are deletable,
+and `git diff main...HEAD` over the subgraph confirms none was silently
+removed during the spike — the only changed guard lines are the three added
+boundary checks and refactor-moves into refined forms. Every guard falls
+into one of five classes:
+
+| Class | Examples | Verdict |
+| --- | --- | --- |
+| Public-API contract | `PqListImpl.get` → `Objects.checkIndex`, `PqMapImpl.get`, `NestedBatchDataView.getFieldName`, `ColumnBatch.checkedIndex` | stays — the check is the API contract |
+| Dataflow refinement point | the `applyDictionary` guards (`d < 0 \|\| d >= dict.length`), `isElementNull`'s `projectedCol < 0`, `toProjectedIndex`'s range-to-`-1` | stays — the checker refines on it; deleting it creates warnings |
+| Boundary validation | the decoder EOF/header checks (`pos + numBytes > data.length`, DELTA prefix lengths, RLE bit width) | stays by premise — file-controlled bytes |
+| Sentinel semantics | the cursor `idx < 0 ? null : …` returns, `rowCount`'s init latch, name-lookup misses | not a check — contract logic |
+| Unprovable invariant | `ProjectedSchema`'s constructor cross-array validation | stays — the element-wise construction gap (finding 4, experiment 2) |
+
+The oracle itself is already validated by a controlled observation this
+branch ran: replacing the throwing `refineProjCol` bridge with the trusted
+conversion surfaced +9 `argument` warnings in `PqMapImpl` — the instrument
+does detect the removal of a load-bearing check, so a zero-warning deletion
+would have been meaningful evidence had a candidate existed.
+
+Conclusion: the deletion hypothesis is **vacuous here, not untested**. The
+codebase carries no redundant internal guards on the typed paths — consistent
+with experiment 1's finding that the codebase is already disciplined — so
+the premise's payoff rests on three things the experiments did demonstrate:
+checks that never get written (typed producers like `checkedIndex`), refactors
+that fail the compile when they break an index invariant, and boundary checks
+that become producers of typed values. A redundant-guard population would
+have to exist before "the compiler proves them, delete them" can pay out; on
+this codebase it does not.
 
 ## Costs, honestly
 
