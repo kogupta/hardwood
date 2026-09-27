@@ -304,16 +304,25 @@ public class RowGroupIterator implements Closeable {
     ///
     /// @param schema the file schema from the first file
     /// @param rowGroups the (already filtered) row groups from the first file
-    public void setFirstFile(FileSchema schema, List<RowGroup> rowGroups) {
+    public void setFirstFile(@IndexedBy(OriginalIndex.class) FileSchema schema, List<RowGroup> rowGroups) {
         this.referenceSchema = schema;
         this.firstFileRowGroups = rowGroups;
     }
 
     /// Opens the first file and returns its schema.
+    @IndexedBy(OriginalIndex.class)
     public FileSchema openFirst() throws IOException {
         PreparedFile prepared = fileMetadataCache.getFile(0);
-        referenceSchema = prepared.schema();
+        referenceSchema = asReference(prepared.schema());
         return referenceSchema;
+    }
+
+    /// The first file's schema as the reference schema.
+    // The first file defines the reference schema, so its leaf ordinals are the original indices.
+    @SuppressWarnings("columnindex")
+    @IndexedBy(OriginalIndex.class)
+    private static FileSchema asReference(@IndexedBy(FileOrdinal.class) FileSchema firstFileSchema) {
+        return firstFileSchema;
     }
 
     /// Applies column projection and optional filter, builds the full work list.
@@ -397,6 +406,7 @@ public class RowGroupIterator implements Closeable {
     }
 
     /// Returns the reference schema (from the first file).
+    @IndexedBy(OriginalIndex.class)
     public FileSchema referenceSchema() {
         return referenceSchema;
     }
@@ -494,8 +504,9 @@ public class RowGroupIterator implements Closeable {
     ///
     /// @throws UnsupportedOperationException if any chunk names another file
     private static void requireSameFile(WorkItem workItem) {
+        @IndexedBy(FileOrdinal.class)
         List<ColumnChunk> columns = workItem.rowGroup().columns();
-        for (int i = 0; i < columns.size(); i++) {
+        for (@FileOrdinal int i = 0; i < columns.size(); i++) {
             try {
                 columns.get(i).requireSameFile();
             }
@@ -698,10 +709,12 @@ public class RowGroupIterator implements Closeable {
         });
     }
 
+    @IndexedBy(ProjectedIndex.class)
     private FetchPlan[] computeFetchPlans(WorkItem workItem) throws IOException {
         SharedRowGroupMetadata shared = getSharedMetadata(workItem);
         int projectedCount = projectedSchema.getProjectedColumnCount();
         if (shared.droppedByDictionary()) {
+            @IndexedBy(ProjectedIndex.class)
             FetchPlan[] empty = new FetchPlan[projectedCount];
             Arrays.fill(empty, FetchPlan.EMPTY);
             return empty;
@@ -750,7 +763,7 @@ public class RowGroupIterator implements Closeable {
         @IndexedBy(ProjectedIndex.class)
         FetchPlan[] plans = new FetchPlan[projectedCount];
 
-        for (int projCol = 0; projCol < projectedCount; projCol++) {
+        for (@ProjectedIndex int projCol = 0; projCol < projectedCount; projCol++) {
             int originalIndex = projectedSchema.toOriginalIndex(projCol);
             int fileOrdinal = workItem.columnOrdinals().fileOrdinal(originalIndex);
             ColumnChunk columnChunk = rowGroup.columns().get(fileOrdinal);
@@ -1127,7 +1140,7 @@ public class RowGroupIterator implements Closeable {
                                                       FileColumnOrdinals columnOrdinals,
                                                       InputFile inputFile) throws IOException {
         int projectedCount = projectedSchema.getProjectedColumnCount();
-        for (int p = 0; p < projectedCount; p++) {
+        for (@ProjectedIndex int p = 0; p < projectedCount; p++) {
             int fileOrdinal = columnOrdinals.fileOrdinal(projectedSchema.toOriginalIndex(p));
             ColumnChunk columnChunk = rowGroup.columns().get(fileOrdinal);
             if (columnChunk.offsetIndexOffset() != null) {
@@ -1388,7 +1401,7 @@ public class RowGroupIterator implements Closeable {
     ///
     /// @param fileOrdinals this file's leaf ordinal per touched column
     /// @param schemaPaths the schema path each of those ordinals was resolved from
-    private record ChunkPathCheck(int[] fileOrdinals, FieldPath[] schemaPaths) {
+    private record ChunkPathCheck(@FileOrdinal int[] fileOrdinals, FieldPath[] schemaPaths) {
 
         /// Asserts that the column chunk found at a touched leaf's ordinal is the
         /// chunk for that leaf, by comparing the chunk's own `path_in_schema`
@@ -1403,6 +1416,7 @@ public class RowGroupIterator implements Closeable {
         ///
         /// @throws SchemaIncompatibleException if a chunk disagrees with the schema
         void verify(RowGroup rowGroup, int rowGroupIndex, InputFile inputFile) {
+            @IndexedBy(FileOrdinal.class)
             List<ColumnChunk> chunks = rowGroup.columns();
             int chunkCount = chunks.size();
             for (int i = 0; i < fileOrdinals.length; i++) {
@@ -1430,7 +1444,7 @@ public class RowGroupIterator implements Closeable {
     /// Resolves the file-level side of the chunk-path cross-check for one file.
     private ChunkPathCheck chunkPathCheck(@IndexedBy(FileOrdinal.class) FileSchema fileSchema, FileColumnOrdinals columnOrdinals) {
         int touchedCount = touchedColumns.cardinality();
-        int[] fileOrdinals = new int[touchedCount];
+        @FileOrdinal int[] fileOrdinals = new @FileOrdinal int[touchedCount];
         FieldPath[] schemaPaths = new FieldPath[touchedCount];
         int touched = 0;
         for (int refOrdinal = nextTouched(0); refOrdinal >= 0;
@@ -1531,7 +1545,7 @@ public class RowGroupIterator implements Closeable {
                                          int referenceColumnCount) {
         BitSet touched = new BitSet(referenceColumnCount);
         int projectedColumnCount = projected.getProjectedColumnCount();
-        for (int projectedIndex = 0; projectedIndex < projectedColumnCount; projectedIndex++) {
+        for (@ProjectedIndex int projectedIndex = 0; projectedIndex < projectedColumnCount; projectedIndex++) {
             touched.set(projected.toOriginalIndex(projectedIndex));
         }
         if (filter != null) {
@@ -1548,9 +1562,12 @@ public class RowGroupIterator implements Closeable {
     /// @return this file's leaf ordinal per reference leaf ordinal, `-1` where unresolved
     /// @throws SchemaIncompatibleException if a touched column is missing or its leaf
     ///         differs in a way that changes how its pages decode
-    private int[] validateSchemaCompatibility(InputFile inputFile, @IndexedBy(FileOrdinal.class) FileSchema fileSchema) {
+    @IndexedBy(OriginalIndex.class)
+    private @FileOrdinal int[] validateSchemaCompatibility(InputFile inputFile,
+            @IndexedBy(FileOrdinal.class) FileSchema fileSchema) {
         int referenceColumnCount = referenceSchema.getColumnCount();
-        int[] fileOrdinals = new int[referenceColumnCount];
+        @IndexedBy(OriginalIndex.class)
+        @FileOrdinal int[] fileOrdinals = new @FileOrdinal int[referenceColumnCount];
         Arrays.fill(fileOrdinals, -1);
 
         for (int originalIndex = nextTouched(0); originalIndex >= 0;
@@ -1564,18 +1581,11 @@ public class RowGroupIterator implements Closeable {
     /// resolved by field path.
     ///
     /// @return the column's leaf ordinal in `fileSchema`
-    private int validateColumn(InputFile inputFile, @IndexedBy(FileOrdinal.class) FileSchema fileSchema, @OriginalIndex int originalIndex) {
+    private @FileOrdinal int validateColumn(InputFile inputFile, @IndexedBy(FileOrdinal.class) FileSchema fileSchema,
+            @OriginalIndex int originalIndex) {
         ColumnSchema refColumn = referenceSchema.getColumn(originalIndex);
-
-        ColumnSchema fileColumn;
-        try {
-            fileColumn = fileSchema.getColumn(refColumn.fieldPath());
-        }
-        catch (IllegalArgumentException e) {
-            throw new SchemaIncompatibleException(
-                    ExceptionContext.filePrefix(inputFile.name())
-                            + "Column '" + refColumn.fieldPath() + "' not found");
-        }
+        @FileOrdinal int fileOrdinal = fileOrdinalOf(inputFile, fileSchema, refColumn.fieldPath());
+        ColumnSchema fileColumn = fileSchema.getColumn(fileOrdinal);
 
         PhysicalType refType = refColumn.type();
         PhysicalType fileType = fileColumn.type();
@@ -1640,6 +1650,22 @@ public class RowGroupIterator implements Closeable {
                             + ": expected " + refMaxRep + " but found " + fileMaxRep);
         }
 
-        return fileColumn.columnIndex();
+        return fileOrdinal;
+    }
+
+    /// The leaf ordinal of `path` in `fileSchema`.
+    ///
+    /// @throws SchemaIncompatibleException if `fileSchema` has no leaf at `path`
+    // A leaf found in fileSchema has its ordinal in fileSchema.
+    @SuppressWarnings("columnindex")
+    private static @FileOrdinal int fileOrdinalOf(InputFile inputFile,
+            @IndexedBy(FileOrdinal.class) FileSchema fileSchema, FieldPath path) {
+        try {
+            return fileSchema.getColumn(path).columnIndex();
+        }
+        catch (IllegalArgumentException e) {
+            throw new SchemaIncompatibleException(
+                    ExceptionContext.filePrefix(inputFile.name()) + "Column '" + path + "' not found");
+        }
     }
 }

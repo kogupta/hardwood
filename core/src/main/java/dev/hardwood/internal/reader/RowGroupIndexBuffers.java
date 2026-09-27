@@ -16,21 +16,23 @@ import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.tools.columnindex.qual.FileOrdinal;
+import dev.hardwood.tools.columnindex.qual.IndexedBy;
 
 /// Index buffers for all columns in a single row group.
 ///
 /// Created by a single `readRange()` call spanning the contiguous
 /// index region in the Parquet footer. Individual column indexes are
-/// accessed by their original column index via [#forColumn(int)].
+/// accessed by the file's leaf ordinal via [#forColumn(int)].
 public class RowGroupIndexBuffers {
 
+    @IndexedBy(FileOrdinal.class)
     private final ColumnIndexBuffers[] columns;
 
-    private RowGroupIndexBuffers(ColumnIndexBuffers[] columns) {
+    private RowGroupIndexBuffers(@IndexedBy(FileOrdinal.class) ColumnIndexBuffers[] columns) {
         this.columns = columns;
     }
 
-    /// Returns the index buffers for the given original column index, or `null`
+    /// Returns the index buffers for the given leaf ordinal of the file, or `null`
     /// if no indexes were fetched for that column.
     public ColumnIndexBuffers forColumn(@FileOrdinal int columnIndex) {
         return (columnIndex < columns.length) ? columns[columnIndex] : null;
@@ -63,6 +65,7 @@ public class RowGroupIndexBuffers {
     public static RowGroupIndexBuffers fetch(InputFile inputFile,
             RowGroup rowGroup, boolean includeColumnIndexes) throws IOException {
 
+        @IndexedBy(FileOrdinal.class)
         List<ColumnChunk> allColumns = rowGroup.columns();
 
         long minOffset = Long.MAX_VALUE;
@@ -80,6 +83,7 @@ public class RowGroupIndexBuffers {
             }
         }
 
+        @IndexedBy(FileOrdinal.class)
         ColumnIndexBuffers[] result = new ColumnIndexBuffers[allColumns.size()];
         if (minOffset == Long.MAX_VALUE) {
             return new RowGroupIndexBuffers(result);
@@ -96,7 +100,7 @@ public class RowGroupIndexBuffers {
         }
         ByteBuffer indexRegion = inputFile.readRange(minOffset, Math.toIntExact(indexRegionSize));
 
-        for (int i = 0; i < allColumns.size(); i++) {
+        for (@FileOrdinal int i = 0; i < allColumns.size(); i++) {
             ColumnChunk col = allColumns.get(i);
             ByteBuffer oi = null;
             ByteBuffer ci = null;

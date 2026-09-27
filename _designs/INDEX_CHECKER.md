@@ -52,7 +52,7 @@ Error Prone runs in the same `javac` invocation only when the `qa` profile is ac
 ## Rules
 
 1. A boundary keeps its runtime check. The check is written as an `if … throw` on the value itself; the checker narrows the value's type from that condition. `Objects.checkIndex` and a separate `checkBounds(index)` helper do not narrow the caller's value.
-2. The type of every parameter, field, record component and return value between the boundary and the use carries the fact. An unannotated link breaks the proof and the checker reports it.
+2. The type of every parameter, field, record component and return value between the boundary and the use carries the fact. Within the checked set, an unannotated link breaks the proof and the checker reports it.
 3. An internal re-check is deleted once the checker proves it can never fire. A test that exists only to build the impossible state (for example a record constructed with `-1` by hand) is deleted with it.
 4. Where the checker cannot prove a fact, the code either keeps a runtime check or carries a suppression on the narrowest element, with a comment that states the fact being asserted. The key is `"index"` for an Index Checker finding and `"value:<message key>"` for a Constant Value Checker finding, such as `"value:switch.expression"`; `"index"` does not suppress the latter.
 5. Every call site that passes a value into an annotated parameter or record component is in the checked set, or passes a literal. Otherwise the callee keeps its runtime check. An annotation on a class outside the set constrains only the callers inside it.
@@ -72,6 +72,10 @@ Hardwood addresses columns in several index spaces. They are all `int`, so passi
 
 The `column-index-check` profile of `hardwood-core` runs a Hardwood checker for three of these spaces. It is a Checker Framework subtyping checker, built by the `hardwood-column-index-checker` module (`tools/column-index-checker`), which also holds the qualifiers. Core depends on that module with `provided` scope. The profile checks the classes named by `column-index-check.classes`, compiles into `target/column-index-check` and empties it first, as `index-check` does.
 
+Run it as `./mvnw -pl core -am -Pcolumn-index-check -Dquick compile`. Without `-am`, Maven takes the checker from the local repository, which lags behind any edit to `tools/column-index-checker`.
+
+The two profiles configure the same compilation, so they are exclusive: an enforcer rule stops a build that activates both.
+
 ### Qualifiers
 
 | Qualifier | Meaning |
@@ -83,22 +87,39 @@ The `column-index-check` profile of `hardwood-core` runs a Hardwood checker for 
 | `@ColumnIndexUnknown` | Every unannotated `int`. The top of the hierarchy. |
 | `@ColumnIndexBottom` | Integer literals. The bottom of the hierarchy: a literal fits every space. |
 
-A qualifier on a parameter, field or return value states its space; locals take the space of the value assigned to them.
+A qualifier on a parameter, field or return value states its space. A local variable takes the space of the value assigned to it, except that a local holding only a literal reads as its declared type. A loop counter therefore states its space in its declaration, as in `for (@ProjectedIndex int p = 0; p < count; p++)`; an unannotated counter belongs to no space and is rejected wherever one is required.
 
 ### Subscripts
 
-Which space indexes a `FileSchema` or a `RowGroup.columns()` list depends on which file it came from, so no qualifier on `FileSchema.getColumn(int)` itself can state it. The declaration annotation `@IndexedBy(X.class)` states it on the variable, field, parameter or method that holds the array, list or schema. The checker then requires an index of space `X` for `array[i]`, `list.get(i)` and `schema.getColumn(i)` on it. `column-index.astub`, bundled with the checker, marks `RowGroup.columns()` as `@IndexedBy(FileOrdinal.class)`.
+Which space indexes a `FileSchema` or a `RowGroup.columns()` list depends on which file it came from, so no qualifier on `FileSchema.getColumn(int)` itself can state it. The declaration annotation `@IndexedBy(X.class)` states it on the variable, field, parameter or method that holds the array, list or schema. The checker then requires an index of space `X` for:
+
+- `array[i]`;
+- every `int` argument of the `java.util.List` methods `get`, `set`, `add`, `remove`, `listIterator` and `subList`;
+- `schema.getColumn(i)`.
+
+`column-index.astub`, bundled with the checker, marks `RowGroup.columns()` as `@IndexedBy(FileOrdinal.class)`. An `@IndexedBy` naming a class that is not one of the four spaces is an error.
+
+An array, list or schema keeps its `@IndexedBy` when it is assigned to a variable or field, passed to a parameter that carries `@IndexedBy`, or returned: source and target must name the same space, and a missing `@IndexedBy` on either side counts as a space of its own. A freshly allocated array or object fits any target. A parameter without `@IndexedBy` accepts any array, list or schema.
 
 ### Conversion points
 
-A value enters a space at a conversion point: a method that returns the qualified type and carries `@SuppressWarnings("columnindex")` with a comment stating why the value belongs to the space. `ProjectedSchema.originalIndex(ColumnSchema)` and `originalIndex(PrimitiveNode)` turn the `columnIndex()` of a reference-schema leaf into an `@OriginalIndex`. The qualifier is also lost, and needs a conversion point, where the value passes through:
+A value enters a space at a conversion point: a method or local variable that has the qualified type and carries `@SuppressWarnings("columnindex")`, with a comment stating why the value belongs to the space. A cast into a space is an error, so every conversion point is visible as a suppression. The conversion points are:
 
-- a boxed `Integer`, such as a `List<Integer>` element;
+- `ProjectedSchema.originalIndex(ColumnSchema)` and `originalIndex(PrimitiveNode)`, which turn the `columnIndex()` of a reference-schema leaf into an `@OriginalIndex`;
+- `RowGroupIterator.fileOrdinalOf`, which looks a column up by path in one file's schema and returns its `@FileOrdinal`;
+- `RowGroupIterator.asReference`, which marks the first file's schema as the reference schema;
+- `FileColumnOrdinals.identity` and `ProjectedSchema.createAllColumnsProjection`, where each index is its own counterpart in the other space.
+
+The qualifier is also lost, and needs a conversion point, where the value passes through:
+
+- an `int` boxed into an unqualified `Integer`, such as an element of a `List<Integer>`;
 - a JDK functional interface, such as `IntPredicate` or `IntUnaryOperator`;
 - a JDK method that returns a plain `int`, such as `BitSet.nextSetBit`.
 
 ### Limits
 
-Integer literals fit every space, so an index computed from a literal (a loop counter starting at `0`, a `-1` sentinel) is accepted wherever an index is required. The checker catches a mix-up of indices that came from typed sources: a qualified parameter, field or return value.
+The checker catches a mix-up of indices only in the checked set. A qualified parameter outside it binds only the callers inside it, as Rule 5 states. The filter path (`PageFilterEvaluator`, `RowGroupFilterEvaluator`, `MinMaxStats` and the column index of a `ResolvedPredicate` leaf) is outside the set, so passing reference ordinals where the filter needs file ordinals is not caught there.
 
-Stub annotations do not apply to members of nested records such as `SchemaNode.PrimitiveNode`; the conversion points above cover them instead.
+A literal written in place, such as the `0` in `list.get(0)` or a `-1` sentinel, fits every space.
+
+Stub annotations do not apply to the accessors of records nested in another type, such as `SchemaNode.PrimitiveNode`; they do apply to top-level records and to nested classes. The conversion points above cover the nested records.

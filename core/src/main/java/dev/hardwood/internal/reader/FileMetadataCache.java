@@ -24,6 +24,8 @@ import dev.hardwood.jfr.FileOpenedEvent;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.schema.FileSchema;
+import dev.hardwood.tools.columnindex.qual.FileOrdinal;
+import dev.hardwood.tools.columnindex.qual.IndexedBy;
 
 /// Lazily opens input files and caches each parsed footer for one
 /// [dev.hardwood.reader.ParquetFileReader].
@@ -192,7 +194,7 @@ public final class FileMetadataCache {
     record PreparedFile(
             InputFile inputFile,
             FileMetaData metaData,
-            FileSchema schema,
+            @IndexedBy(FileOrdinal.class) FileSchema schema,
             List<RowGroup> rowGroups,
             BoundsReadability boundsReadability
     ) {

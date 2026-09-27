@@ -30,6 +30,14 @@
     <tag>HEAD</tag>
   </scm>
 
+  <properties>
+    <!-- Each checker profile sets its marker; the enforcer rule in each profile requires
+         exactly one, because both profiles configure the same compilation. -->
+    <index-check.marker></index-check.marker>
+    <column-index-check.marker></column-index-check.marker>
+    <checker-profiles>${index-check.marker}${column-index-check.marker}</checker-profiles>
+  </properties>
+
   <dependencyManagement>
     <dependencies>
       <dependency>
@@ -240,6 +248,7 @@
     <profile>
       <id>index-check</id>
       <properties>
+        <index-check.marker>index-check,</index-check.marker>
         <index-check.classes>^dev\.hardwood\.(internal\.metadata\.DictionaryPageHeader|internal\.thrift\.DictionaryPageHeaderReader|internal\.reader\.DictionaryParser|reader\.ParquetFileReader)(\..*)?$</index-check.classes>
       </properties>
       <build>
@@ -250,6 +259,27 @@
              the same. -->
         <directory>${project.basedir}/target/index-check</directory>
         <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-enforcer-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>one-checker-profile</id>
+                <goals>
+                  <goal>enforce</goal>
+                </goals>
+                <configuration>
+                  <rules>
+                    <requireProperty>
+                      <property>checker-profiles</property>
+                      <regex>[^,]+,</regex>
+                      <regexMessage>-Pindex-check and -Pcolumn-index-check run separate checkers over the same compilation; activate one at a time.</regexMessage>
+                    </requireProperty>
+                  </rules>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
           <plugin>
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-clean-plugin</artifactId>
@@ -295,12 +325,34 @@
     <profile>
       <id>column-index-check</id>
       <properties>
+        <column-index-check.marker>column-index-check,</column-index-check.marker>
         <column-index-check.classes>^dev\.hardwood\.internal\.(reader\.(FileColumnOrdinals|RowGroupIterator|RowGroupIndexBuffers)|predicate\.(BoundsReadability|dictionary\.RowGroupDictionaryFilterSource)|schema\.ProjectedSchema)(\..*)?$</column-index-check.classes>
       </properties>
       <build>
         <!-- A directory of its own, emptied first, for the same reason as -Pindex-check. -->
         <directory>${project.basedir}/target/column-index-check</directory>
         <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-enforcer-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>one-checker-profile</id>
+                <goals>
+                  <goal>enforce</goal>
+                </goals>
+                <configuration>
+                  <rules>
+                    <requireProperty>
+                      <property>checker-profiles</property>
+                      <regex>[^,]+,</regex>
+                      <regexMessage>-Pindex-check and -Pcolumn-index-check run separate checkers over the same compilation; activate one at a time.</regexMessage>
+                    </requireProperty>
+                  </rules>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
           <plugin>
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-clean-plugin</artifactId>

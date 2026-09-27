@@ -30,11 +30,11 @@ import dev.hardwood.tools.columnindex.qual.OriginalIndex;
 public final class FileColumnOrdinals {
 
     @IndexedBy(OriginalIndex.class)
-    private final int[] fileOrdinals;
+    private final @FileOrdinal int[] fileOrdinals;
     private final ResolvedPredicate filter;
     private final BoundsReadability boundsReadability;
 
-    private FileColumnOrdinals(int[] fileOrdinals, ResolvedPredicate filter,
+    private FileColumnOrdinals(@IndexedBy(OriginalIndex.class) @FileOrdinal int[] fileOrdinals, ResolvedPredicate filter,
             BoundsReadability boundsReadability) {
         this.fileOrdinals = fileOrdinals;
         this.filter = filter;
@@ -49,9 +49,13 @@ public final class FileColumnOrdinals {
     /// @param boundsReadability the reference file's bounds readability
     public static FileColumnOrdinals identity(int referenceLeafCount, ResolvedPredicate filter,
             BoundsReadability boundsReadability) {
-        int[] ordinals = new int[referenceLeafCount];
-        for (int i = 0; i < referenceLeafCount; i++) {
-            ordinals[i] = i;
+        @IndexedBy(OriginalIndex.class)
+        @FileOrdinal int[] ordinals = new @FileOrdinal int[referenceLeafCount];
+        for (@OriginalIndex int i = 0; i < referenceLeafCount; i++) {
+            // In the reference file each leaf sits at its reference ordinal.
+            @SuppressWarnings("columnindex")
+            @FileOrdinal int ordinal = i;
+            ordinals[i] = ordinal;
         }
         return new FileColumnOrdinals(ordinals, filter, boundsReadability);
     }
@@ -62,7 +66,7 @@ public final class FileColumnOrdinals {
     ///        `-1` for reference leaves the file does not carry
     /// @param filter the filter predicate resolved against the reference schema, or `null`
     /// @param boundsReadability this file's bounds readability, by its own leaf ordinals
-    static FileColumnOrdinals of(int[] fileOrdinals, ResolvedPredicate filter,
+    static FileColumnOrdinals of(@IndexedBy(OriginalIndex.class) @FileOrdinal int[] fileOrdinals, ResolvedPredicate filter,
             BoundsReadability boundsReadability) {
         return new FileColumnOrdinals(fileOrdinals,
                 filter == null ? null : ResolvedPredicate.remapColumns(filter, fileOrdinals),
@@ -75,9 +79,8 @@ public final class FileColumnOrdinals {
     /// @throws IllegalStateException if the file does not carry that leaf, which
     ///         means it was never validated as a projected column
     public @FileOrdinal int fileOrdinal(@OriginalIndex int referenceOrdinal) {
-        // Past the -1 check below, an entry is this file's ordinal.
-        @SuppressWarnings("columnindex")
-        @FileOrdinal int ordinal = fileOrdinals[referenceOrdinal];
+        // -1 marks a reference leaf this file does not carry.
+        int ordinal = fileOrdinals[referenceOrdinal];
         if (ordinal < 0) {
             throw new IllegalStateException(
                     "Column " + referenceOrdinal + " of the reference schema is absent from this file");

@@ -32,6 +32,7 @@ import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.internal.thrift.FileMetaDataReader.ReadFooter;
 import dev.hardwood.jfr.FileOpenedEvent;
 import dev.hardwood.jfr.RowGroupByteRangeFilterEvent;
+import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.schema.ColumnProjection;
@@ -783,10 +784,10 @@ public class ParquetFileReader implements Closeable {
     }
 
     private static long rowGroupMidpoint(RowGroup rg) {
-        List<dev.hardwood.metadata.ColumnChunk> columns = rg.columns();
+        List<ColumnChunk> columns = rg.columns();
         long start = columns.get(0).chunkStartOffset();
         long compressed = 0;
-        for (dev.hardwood.metadata.ColumnChunk chunk : columns) {
+        for (ColumnChunk chunk : columns) {
             compressed += chunk.metaData().totalCompressedSize();
         }
         return start + compressed / 2;
