@@ -126,21 +126,21 @@ public final class RecordShredder {
     private final String @SameLen("layers") [] columnNames;
 
     // Per-batch binding.
-    private Validity @SameLen("layers") [] leafValidities;
+    private Validity[] leafValidities;
     private Map<String, Validity> structValidities;
     private Map<String, Validity> listValidities;
     private Map<String, int[]> listOffsets;
-    private ColumnSource @SameLen("layers") [] sources;
+    private ColumnSource[] sources;
     private int recordCount;
 
     /// @param schema the file schema
     public RecordShredder(FileSchema schema) {
         int columnCount = schema.getColumnCount();
         this.layers = new Layer[columnCount][];
-        this.leafOptional = new boolean[columnCount];
-        this.maxDef = new int[columnCount];
-        this.maxRep = new int[columnCount];
-        this.columnNames = new String[columnCount];
+        this.leafOptional = new boolean[this.layers.length];
+        this.maxDef = new int[this.layers.length];
+        this.maxRep = new int[this.layers.length];
+        this.columnNames = new String[this.layers.length];
         List<Layer> collected = new ArrayList<>();
         walk(schema.getRootNode(), new ArrayList<>(), new ArrayList<>(), false, collected);
         this.distinctLayers = collected.toArray(new Layer[0]);
@@ -204,7 +204,7 @@ public final class RecordShredder {
 
     /// Binds the shredder to one batch's inputs, validates them, and derives the record
     /// count. Each column's value window is reset to the batch's source.
-    public void bind(ColumnSource @SameLen("layers") [] sources, Validity @SameLen("layers") [] leafValidities,
+    public void bind(ColumnSource[] sources, Validity[] leafValidities,
                      Map<String, Validity> structValidities, Map<String, Validity> listValidities,
                      Map<String, int[]> listOffsets) {
         if (sources.length != layers.length || leafValidities.length != layers.length) {

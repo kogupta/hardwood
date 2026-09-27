@@ -55,7 +55,7 @@ final class PqMapImpl implements PqMap {
 
     static PqMap create(NestedBatchIndex batch, TopLevelFieldMap.FieldDesc.MapOf mapDesc,
                         int rowIndex, int valueIndex) {
-        int keyProjCol = mapDesc.keyProjCol();
+        int keyProjCol = batch.refineProjCol(mapDesc.keyProjCol());
         int mlLevel = mapDesc.schema().maxRepetitionLevel();
         int leafMaxRep = batch.getMaxRepLevel(keyProjCol);
 
@@ -87,7 +87,7 @@ final class PqMapImpl implements PqMap {
 
     static boolean isMapNull(NestedBatchIndex batch, TopLevelFieldMap.FieldDesc.MapOf mapDesc,
                              int rowIndex, int valueIndex) {
-        int keyProjCol = mapDesc.keyProjCol();
+        int keyProjCol = batch.refineProjCol(mapDesc.keyProjCol());
         int mlLevel = mapDesc.schema().maxRepetitionLevel();
         int leafMaxRep = batch.getMaxRepLevel(keyProjCol);
 
@@ -210,7 +210,7 @@ final class PqMapImpl implements PqMap {
 
     private int indexOfStringKey(String key) {
         Objects.requireNonNull(key, "key");
-        int keyProjCol = mapDesc.keyProjCol();
+        int keyProjCol = batch.refineProjCol(mapDesc.keyProjCol());
         BinaryBatchValues keys = (BinaryBatchValues) batch.valueArrays[keyProjCol];
         byte[] needle = key.getBytes(StandardCharsets.UTF_8);
         for (int i = end - 1; i >= start; i--) {
@@ -225,7 +225,7 @@ final class PqMapImpl implements PqMap {
     }
 
     private int indexOfIntKey(int key) {
-        int keyProjCol = mapDesc.keyProjCol();
+        int keyProjCol = batch.refineProjCol(mapDesc.keyProjCol());
         int[] keys = (int[]) batch.valueArrays[keyProjCol];
         for (int i = end - 1; i >= start; i--) {
             if (batch.isElementNull(keyProjCol, i)) {
@@ -239,7 +239,7 @@ final class PqMapImpl implements PqMap {
     }
 
     private int indexOfLongKey(long key) {
-        int keyProjCol = mapDesc.keyProjCol();
+        int keyProjCol = batch.refineProjCol(mapDesc.keyProjCol());
         long[] keys = (long[]) batch.valueArrays[keyProjCol];
         for (int i = end - 1; i >= start; i--) {
             if (batch.isElementNull(keyProjCol, i)) {
@@ -254,7 +254,7 @@ final class PqMapImpl implements PqMap {
 
     private int indexOfBinaryKey(byte[] key) {
         Objects.requireNonNull(key, "key");
-        int keyProjCol = mapDesc.keyProjCol();
+        int keyProjCol = batch.refineProjCol(mapDesc.keyProjCol());
         BinaryBatchValues keys = (BinaryBatchValues) batch.valueArrays[keyProjCol];
         for (int i = end - 1; i >= start; i--) {
             if (batch.isElementNull(keyProjCol, i)) {
@@ -277,7 +277,7 @@ final class PqMapImpl implements PqMap {
         if (isValueNullAt(valueIdx)) {
             return null;
         }
-        return batch.decodeLeaf(mapDesc.valueProjCol(), valueIdx, valueSchema);
+        return batch.decodeLeaf(valueColumn(), valueIdx, valueSchema);
     }
 
     private Object rawValueAt(int valueIdx) {
@@ -317,7 +317,7 @@ final class PqMapImpl implements PqMap {
         // to a leaf deeper than the struct's own primitives (e.g. a leaf inside a
         // list inside the struct), so translate the entry index to the value
         // column's leaf position before reading its def level.
-        int valueProjCol = mapDesc.valueProjCol();
+        int valueProjCol = valueColumn();
         if (valueProjCol >= 0) {
             int valLeafIdx = resolveValueLeafIdx(valueIdx);
             int defLevel = batch.getDefLevel(valueProjCol, valLeafIdx);
@@ -373,8 +373,15 @@ final class PqMapImpl implements PqMap {
         return new PqVariantImpl(metadataBytes, value);
     }
 
+    /// The map's value column refined against this batch, or -1 when the value
+    /// child is not projected (a key-only map). Callers decide how -1 reads.
+    private int valueColumn() {
+        int col = mapDesc.valueProjCol();
+        return col < 0 ? -1 : batch.refineProjCol(col);
+    }
+
     private boolean isValueNullAt(int valueIdx) {
-        int valueProjCol = mapDesc.valueProjCol();
+        int valueProjCol = valueColumn();
         if (valueProjCol < 0) {
             return true;
         }
@@ -388,7 +395,7 @@ final class PqMapImpl implements PqMap {
     }
 
     private Object readValueAt(int valueIdx) {
-        int valueProjCol = mapDesc.valueProjCol();
+        int valueProjCol = valueColumn();
         if (batch.isElementNull(valueProjCol, valueIdx)) {
             return null;
         }
@@ -412,19 +419,19 @@ final class PqMapImpl implements PqMap {
 
     /// `valueIdx` if the value at that position is present, -1 if it is null.
     private int valueIndexOrNull(int valueIdx) {
-        return batch.isElementNull(mapDesc.valueProjCol(), valueIdx) ? -1 : valueIdx;
+        return batch.isElementNull(valueColumn(), valueIdx) ? -1 : valueIdx;
     }
 
     private LocalDate readDateValue(int valueIdx) {
         int idx = valueIndexOrNull(valueIdx);
         return idx < 0 ? null : NestedLeafDecoder.readDate(
-                batch, mapDesc.valueProjCol(), idx, requirePrimitiveValue());
+                batch, valueColumn(), idx, requirePrimitiveValue());
     }
 
     private LocalTime readTimeValue(int valueIdx) {
         int idx = valueIndexOrNull(valueIdx);
         return idx < 0 ? null : NestedLeafDecoder.readTime(
-                batch, mapDesc.valueProjCol(), idx, requirePrimitiveValue());
+                batch, valueColumn(), idx, requirePrimitiveValue());
     }
 
     /// The [Instant] a UTC-adjusted `TIMESTAMP` value holds, or the one a legacy
@@ -433,31 +440,31 @@ final class PqMapImpl implements PqMap {
     private Instant readTimestampValue(int valueIdx) {
         int idx = valueIndexOrNull(valueIdx);
         return idx < 0 ? null : NestedLeafDecoder.readTimestamp(
-                batch, mapDesc.valueProjCol(), idx, requirePrimitiveValue());
+                batch, valueColumn(), idx, requirePrimitiveValue());
     }
 
     private LocalDateTime readLocalTimestampValue(int valueIdx) {
         int idx = valueIndexOrNull(valueIdx);
         return idx < 0 ? null : NestedLeafDecoder.readLocalTimestamp(
-                batch, mapDesc.valueProjCol(), idx, requirePrimitiveValue());
+                batch, valueColumn(), idx, requirePrimitiveValue());
     }
 
     private BigDecimal readDecimalValue(int valueIdx) {
         int idx = valueIndexOrNull(valueIdx);
         return idx < 0 ? null : NestedLeafDecoder.readDecimal(
-                batch, mapDesc.valueProjCol(), idx, requirePrimitiveValue());
+                batch, valueColumn(), idx, requirePrimitiveValue());
     }
 
     private UUID readUuidValue(int valueIdx) {
         int idx = valueIndexOrNull(valueIdx);
         return idx < 0 ? null : NestedLeafDecoder.readUuid(
-                batch, mapDesc.valueProjCol(), idx, requirePrimitiveValue());
+                batch, valueColumn(), idx, requirePrimitiveValue());
     }
 
     private PqInterval readIntervalValue(int valueIdx) {
         int idx = valueIndexOrNull(valueIdx);
         return idx < 0 ? null : NestedLeafDecoder.readInterval(
-                batch, mapDesc.valueProjCol(), idx, requirePrimitiveValue());
+                batch, valueColumn(), idx, requirePrimitiveValue());
     }
 
     /// Translates an entry index (expressed as a position in the key column's leaf
@@ -474,12 +481,12 @@ final class PqMapImpl implements PqMap {
     /// For primitive-equivalent values (same rep-level depth as the key), the
     /// two indexing spaces coincide and the input is returned unchanged.
     private int resolveValueLeafIdx(int keyLeafIdx) {
-        int valueProjCol = mapDesc.valueProjCol();
+        int valueProjCol = valueColumn();
         if (valueProjCol < 0) {
             return keyLeafIdx;
         }
         int[][] valMl = batch.multiOffsets[valueProjCol];
-        int[][] keyMl = batch.multiOffsets[mapDesc.keyProjCol()];
+        int[][] keyMl = batch.multiOffsets[batch.refineProjCol(mapDesc.keyProjCol())];
         int valLevels = valMl == null ? 0 : valMl.length;
         int keyLevels = keyMl == null ? 0 : keyMl.length;
         if (valLevels <= keyLevels) {
@@ -518,7 +525,7 @@ final class PqMapImpl implements PqMap {
 
         @Override
         public int getIntKey() {
-            int keyProjCol = mapDesc.keyProjCol();
+            int keyProjCol = batch.refineProjCol(mapDesc.keyProjCol());
             if (batch.isElementNull(keyProjCol, valueIdx)) {
                 throw new NullPointerException("Key is null");
             }
@@ -527,7 +534,7 @@ final class PqMapImpl implements PqMap {
 
         @Override
         public long getLongKey() {
-            int keyProjCol = mapDesc.keyProjCol();
+            int keyProjCol = batch.refineProjCol(mapDesc.keyProjCol());
             if (batch.isElementNull(keyProjCol, valueIdx)) {
                 throw new NullPointerException("Key is null");
             }
@@ -536,7 +543,7 @@ final class PqMapImpl implements PqMap {
 
         @Override
         public String getStringKey() {
-            int keyProjCol = mapDesc.keyProjCol();
+            int keyProjCol = batch.refineProjCol(mapDesc.keyProjCol());
             if (batch.isElementNull(keyProjCol, valueIdx)) {
                 return null;
             }
@@ -545,7 +552,7 @@ final class PqMapImpl implements PqMap {
 
         @Override
         public byte[] getBinaryKey() {
-            int keyProjCol = mapDesc.keyProjCol();
+            int keyProjCol = batch.refineProjCol(mapDesc.keyProjCol());
             if (batch.isElementNull(keyProjCol, valueIdx)) {
                 return null;
             }
@@ -554,7 +561,7 @@ final class PqMapImpl implements PqMap {
 
         @Override
         public Object getKey() {
-            int keyProjCol = mapDesc.keyProjCol();
+            int keyProjCol = batch.refineProjCol(mapDesc.keyProjCol());
             if (batch.isElementNull(keyProjCol, valueIdx)) {
                 return null;
             }
@@ -570,7 +577,7 @@ final class PqMapImpl implements PqMap {
 
         @Override
         public int getIntValue() {
-            int valueProjCol = mapDesc.valueProjCol();
+            int valueProjCol = valueColumn();
             if (batch.isElementNull(valueProjCol, valueIdx)) {
                 throw new NullPointerException("Value is null");
             }
@@ -579,7 +586,7 @@ final class PqMapImpl implements PqMap {
 
         @Override
         public long getLongValue() {
-            int valueProjCol = mapDesc.valueProjCol();
+            int valueProjCol = valueColumn();
             if (batch.isElementNull(valueProjCol, valueIdx)) {
                 throw new NullPointerException("Value is null");
             }
@@ -588,7 +595,7 @@ final class PqMapImpl implements PqMap {
 
         @Override
         public float getFloatValue() {
-            int valueProjCol = mapDesc.valueProjCol();
+            int valueProjCol = valueColumn();
             if (batch.isElementNull(valueProjCol, valueIdx)) {
                 throw new NullPointerException("Value is null");
             }
@@ -604,7 +611,7 @@ final class PqMapImpl implements PqMap {
 
         @Override
         public double getDoubleValue() {
-            int valueProjCol = mapDesc.valueProjCol();
+            int valueProjCol = valueColumn();
             if (batch.isElementNull(valueProjCol, valueIdx)) {
                 throw new NullPointerException("Value is null");
             }
@@ -613,7 +620,7 @@ final class PqMapImpl implements PqMap {
 
         @Override
         public boolean getBooleanValue() {
-            int valueProjCol = mapDesc.valueProjCol();
+            int valueProjCol = valueColumn();
             if (batch.isElementNull(valueProjCol, valueIdx)) {
                 throw new NullPointerException("Value is null");
             }
@@ -622,7 +629,7 @@ final class PqMapImpl implements PqMap {
 
         @Override
         public String getStringValue() {
-            int valueProjCol = mapDesc.valueProjCol();
+            int valueProjCol = valueColumn();
             if (batch.isElementNull(valueProjCol, valueIdx)) {
                 return null;
             }
@@ -631,7 +638,7 @@ final class PqMapImpl implements PqMap {
 
         @Override
         public byte[] getBinaryValue() {
-            int valueProjCol = mapDesc.valueProjCol();
+            int valueProjCol = valueColumn();
             if (batch.isElementNull(valueProjCol, valueIdx)) {
                 return null;
             }
@@ -713,7 +720,7 @@ final class PqMapImpl implements PqMap {
         // ==================== Internal ====================
 
         private Object readKey() {
-            int keyProjCol = mapDesc.keyProjCol();
+            int keyProjCol = batch.refineProjCol(mapDesc.keyProjCol());
             if (batch.isElementNull(keyProjCol, valueIdx)) {
                 return null;
             }

@@ -16,7 +16,6 @@ import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.schema.ColumnSchema;
-import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
 
 /// Pre-computed batch-level index for all projected columns.
@@ -51,22 +50,45 @@ final class NestedBatchIndex {
     /// straddle files.
     final String fileName;
 
-    private NestedBatchIndex(Object[] valueArrays, int[][] defLevels,
-                             ColumnSchema[] columnSchemas, int[] valueCounts,
-                             int[] recordCounts, int[][] offsets,
-                             int[][][] multiOffsets,
-                             long[][] elementValidity, ProjectedSchema projectedSchema,
-                             String fileName) {
+    private NestedBatchIndex(NestedBatch[] batches, ColumnSchema @Nullable [] columnSchemas,
+                             ProjectedSchema projectedSchema) {
+        // Every outer array is created from `batches.length` and assigned straight to
+        // its field from a local, so the SameLen checker unifies the family the field
+        // declarations declare: one projectedCol index is valid across all of them.
+        // The schema array is optional; when present, the length check ties it to the
+        // same family — without it a short array would surface later as an
+        // access-time ArrayIndexOutOfBoundsException.
+        int[] valueCounts = new int[batches.length];
+        Object[] valueArrays = new Object[batches.length];
+        int[][] defLevels = new int[batches.length][];
+        int[] recordCounts = new int[batches.length];
+        int[][] offsets = new int[batches.length][];
+        int[][][] multiOffsets = new int[batches.length][][];
+        long[][] elementValidity = new long[batches.length][];
+        if (columnSchemas != null && columnSchemas.length != valueCounts.length) {
+            throw new IllegalArgumentException("Column schema count " + columnSchemas.length
+                    + " does not match the " + valueCounts.length + " batch columns");
+        }
+        for (int col = 0; col < valueCounts.length; col++) {
+            NestedBatch batch = batches[col];
+            valueArrays[col] = batch.values;
+            defLevels[col] = batch.definitionLevels;
+            valueCounts[col] = batch.valueCount;
+            recordCounts[col] = batch.recordCount;
+            offsets[col] = batch.recordOffsets;
+            multiOffsets[col] = compactToRepLevelOffsets(batch.multiLevelOffsets);
+            elementValidity[col] = batch.elementValidity;
+        }
+        this.valueCounts = valueCounts;
         this.valueArrays = valueArrays;
         this.defLevels = defLevels;
-        this.columnSchemas = columnSchemas;
-        this.valueCounts = valueCounts;
         this.recordCounts = recordCounts;
         this.offsets = offsets;
         this.multiOffsets = multiOffsets;
         this.elementValidity = elementValidity;
+        this.columnSchemas = columnSchemas;
         this.projectedSchema = projectedSchema;
-        this.fileName = fileName;
+        this.fileName = batches.length > 0 ? batches[0].fileName : null;
     }
 
     /// Fails when the caller has asked a column for a float it does not hold.
@@ -90,44 +112,10 @@ final class NestedBatchIndex {
 
     /// Build the batch index from [NestedBatch] objects whose index fields
     /// have been pre-computed by the drain thread.
-    static NestedBatchIndex buildFromBatches(NestedBatch[] batches, ColumnSchema[] columnSchemas,
-                                              FileSchema schema, ProjectedSchema projectedSchema,
-                                              TopLevelFieldMap fieldMap) {
-        // Establishes the @SameLen("valueCounts") family the fields declare: every
-        // outer array is sized from the batch count, so one projectedCol index is valid
-        // across all of them. The schema array is optional but, when present, must
-        // cover the same columns — without this check a short array would surface
-        // later as an access-time ArrayIndexOutOfBoundsException.
-        int colCount = batches.length;
-        if (columnSchemas != null && columnSchemas.length != colCount) {
-            throw new IllegalArgumentException("Column schema count " + columnSchemas.length
-                    + " does not match the " + colCount + " batch columns");
-        }
-        Object[] valueArrays = new Object[colCount];
-        int[][] defLevels = new int[colCount][];
-        int[] valueCounts = new int[colCount];
-        int[] recordCounts = new int[colCount];
-        int[][] offsets = new int[colCount][];
-        int[][][] multiOffsets = new int[colCount][][];
-        long[][] elementValidity = new long[colCount][];
-
-        for (int col = 0; col < colCount; col++) {
-            NestedBatch batch = batches[col];
-            valueArrays[col] = batch.values;
-            defLevels[col] = batch.definitionLevels;
-            valueCounts[col] = batch.valueCount;
-            recordCounts[col] = batch.recordCount;
-            offsets[col] = batch.recordOffsets;
-            multiOffsets[col] = compactToRepLevelOffsets(batch.multiLevelOffsets);
-            elementValidity[col] = batch.elementValidity;
-        }
-
-        return new NestedBatchIndex(valueArrays, defLevels, columnSchemas,
-                valueCounts, recordCounts, offsets, multiOffsets,
-                elementValidity, projectedSchema,
-                colCount > 0 ? batches[0].fileName : null);
+    static NestedBatchIndex buildFromBatches(NestedBatch[] batches, ColumnSchema @Nullable [] columnSchemas,
+                                             ProjectedSchema projectedSchema) {
+        return new NestedBatchIndex(batches, columnSchemas, projectedSchema);
     }
-
     /// Compact a layer-indexed offsets array (length `layerCount`, with
     /// `null` at `STRUCT`-layer positions) into a rep-level-indexed array
     /// (length `repCount`) by dropping the `null` slots while preserving
@@ -156,6 +144,23 @@ final class NestedBatchIndex {
     }
 
     // ==================== Value Access ====================
+
+    /// Refines a schema-derived projected column against this batch's columns.
+    ///
+    /// Descriptors ([TopLevelFieldMap.FieldDesc]) carry column indices built
+    /// from the schema; this batch is per-`setBatchData` state. The two are
+    /// guaranteed to agree by construction, but that guarantee crosses object
+    /// boundaries the type system cannot see, so this check — the one place a
+    /// descriptor meets a batch — establishes it at runtime once per call and
+    /// mints the `@IndexFor("valueCounts")` type the accessors require. It
+    /// never fires for a descriptor built against the same projected schema.
+    @IndexFor("valueCounts") int refineProjCol(int col) {
+        if (col < 0 || col >= valueCounts.length) {
+            throw new IllegalStateException("Projected column " + col + " is outside the "
+                    + valueCounts.length + " columns of this batch");
+        }
+        return col;
+    }
 
     /// Get the definition level at the given value index.
     int getDefLevel(@IndexFor("valueCounts") int projectedCol, int valueIndex) {

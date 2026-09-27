@@ -11,17 +11,19 @@ import java.util.NoSuchElementException;
 import java.util.PrimitiveIterator;
 import java.util.function.LongConsumer;
 
+import org.checkerframework.checker.index.qual.IndexFor;
+
 import dev.hardwood.row.PqLongList;
 
 /// Flyweight [PqLongList] that reads long values directly from a column array.
 final class PqLongListImpl implements PqLongList {
 
     private final NestedBatchIndex batch;
-    private final int projectedCol;
+    private final @IndexFor("batch.valueCounts") int projectedCol;
     private final int start;
     private final int end;
 
-    PqLongListImpl(NestedBatchIndex batch, int projectedCol, int start, int end) {
+    PqLongListImpl(NestedBatchIndex batch, @IndexFor("batch.valueCounts") int projectedCol, int start, int end) {
         this.batch = batch;
         this.projectedCol = projectedCol;
         this.start = start;

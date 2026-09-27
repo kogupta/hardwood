@@ -11,17 +11,19 @@ import java.util.NoSuchElementException;
 import java.util.PrimitiveIterator;
 import java.util.function.DoubleConsumer;
 
+import org.checkerframework.checker.index.qual.IndexFor;
+
 import dev.hardwood.row.PqDoubleList;
 
 /// Flyweight [PqDoubleList] that reads double values directly from a column array.
 final class PqDoubleListImpl implements PqDoubleList {
 
     private final NestedBatchIndex batch;
-    private final int projectedCol;
+    private final @IndexFor("batch.valueCounts") int projectedCol;
     private final int start;
     private final int end;
 
-    PqDoubleListImpl(NestedBatchIndex batch, int projectedCol, int start, int end) {
+    PqDoubleListImpl(NestedBatchIndex batch, @IndexFor("batch.valueCounts") int projectedCol, int start, int end) {
         this.batch = batch;
         this.projectedCol = projectedCol;
         this.start = start;

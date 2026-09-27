@@ -76,7 +76,7 @@ class VariantShredReassemblerTest {
         typedCol.recordCount = 1;
         typedCol.definitionLevels = new int[] { 1 };
         NestedBatchIndex batch = NestedBatchIndex.buildFromBatches(
-                new NestedBatch[] { typedCol }, null, null, null, null);
+                new NestedBatch[] { typedCol }, null, null);
 
         VariantShredReassembler reassembler = new VariantShredReassembler();
         reassembler.setCurrentMetadata(new VariantMetadata(METADATA_DUP));
@@ -116,6 +116,6 @@ class VariantShredReassemblerTest {
 
         return NestedBatchIndex.buildFromBatches(
                 new NestedBatch[] { valueCol, typedCol },
-                null, null, null, null);
+                null, null);
     }
 }

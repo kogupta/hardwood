@@ -11,6 +11,8 @@ import java.util.NoSuchElementException;
 import java.util.PrimitiveIterator;
 import java.util.function.IntConsumer;
 
+import org.checkerframework.checker.index.qual.IndexFor;
+
 import dev.hardwood.row.PqIntList;
 
 /// Flyweight [PqIntList] that reads int values directly from a column array.
@@ -18,11 +20,11 @@ import dev.hardwood.row.PqIntList;
 final class PqIntListImpl implements PqIntList {
 
     private final NestedBatchIndex batch;
-    private final int projectedCol;
+    private final @IndexFor("batch.valueCounts") int projectedCol;
     private final int start;
     private final int end;
 
-    PqIntListImpl(NestedBatchIndex batch, int projectedCol, int start, int end) {
+    PqIntListImpl(NestedBatchIndex batch, @IndexFor("batch.valueCounts") int projectedCol, int start, int end) {
         this.batch = batch;
         this.projectedCol = projectedCol;
         this.start = start;

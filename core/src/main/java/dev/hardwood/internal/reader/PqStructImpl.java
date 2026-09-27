@@ -321,7 +321,7 @@ final class PqStructImpl implements PqStruct {
     // ==================== Primitive Read Helpers ====================
 
     private int readInt(TopLevelFieldMap.FieldDesc.Primitive child) {
-        int projCol = child.projectedCol();
+        int projCol = batch.refineProjCol(child.projectedCol());
         int idx = resolveValueIndex(projCol);
         if (batch.isElementNull(projCol, idx)) {
             throw new NullPointerException("Field '" + child.name() + "' is null");
@@ -330,7 +330,7 @@ final class PqStructImpl implements PqStruct {
     }
 
     private long readLong(TopLevelFieldMap.FieldDesc.Primitive child) {
-        int projCol = child.projectedCol();
+        int projCol = batch.refineProjCol(child.projectedCol());
         int idx = resolveValueIndex(projCol);
         if (batch.isElementNull(projCol, idx)) {
             throw new NullPointerException("Field '" + child.name() + "' is null");
@@ -339,7 +339,7 @@ final class PqStructImpl implements PqStruct {
     }
 
     private float readFloat(TopLevelFieldMap.FieldDesc.Primitive child) {
-        int projCol = child.projectedCol();
+        int projCol = batch.refineProjCol(child.projectedCol());
         int idx = resolveValueIndex(projCol);
         if (batch.isElementNull(projCol, idx)) {
             throw new NullPointerException("Field '" + child.name() + "' is null");
@@ -352,7 +352,7 @@ final class PqStructImpl implements PqStruct {
     }
 
     private double readDouble(TopLevelFieldMap.FieldDesc.Primitive child) {
-        int projCol = child.projectedCol();
+        int projCol = batch.refineProjCol(child.projectedCol());
         int idx = resolveValueIndex(projCol);
         if (batch.isElementNull(projCol, idx)) {
             throw new NullPointerException("Field '" + child.name() + "' is null");
@@ -361,7 +361,7 @@ final class PqStructImpl implements PqStruct {
     }
 
     private boolean readBoolean(TopLevelFieldMap.FieldDesc.Primitive child) {
-        int projCol = child.projectedCol();
+        int projCol = batch.refineProjCol(child.projectedCol());
         int idx = resolveValueIndex(projCol);
         if (batch.isElementNull(projCol, idx)) {
             throw new NullPointerException("Field '" + child.name() + "' is null");
@@ -370,7 +370,7 @@ final class PqStructImpl implements PqStruct {
     }
 
     private String readString(TopLevelFieldMap.FieldDesc.Primitive child) {
-        int projCol = child.projectedCol();
+        int projCol = batch.refineProjCol(child.projectedCol());
         int idx = resolveValueIndex(projCol);
         if (batch.isElementNull(projCol, idx)) {
             return null;
@@ -379,7 +379,7 @@ final class PqStructImpl implements PqStruct {
     }
 
     private byte[] readBinary(TopLevelFieldMap.FieldDesc.Primitive child) {
-        int projCol = child.projectedCol();
+        int projCol = batch.refineProjCol(child.projectedCol());
         int idx = resolveValueIndex(projCol);
         if (batch.isElementNull(projCol, idx)) {
             return null;
@@ -389,46 +389,46 @@ final class PqStructImpl implements PqStruct {
 
     /// The value index of `child` in the current record, or -1 when the field is null.
     private int valueIndexOrNull(TopLevelFieldMap.FieldDesc.Primitive child) {
-        int projCol = child.projectedCol();
+        int projCol = batch.refineProjCol(child.projectedCol());
         int idx = resolveValueIndex(projCol);
         return batch.isElementNull(projCol, idx) ? -1 : idx;
     }
 
     private LocalDate readDate(TopLevelFieldMap.FieldDesc.Primitive child) {
         int idx = valueIndexOrNull(child);
-        return idx < 0 ? null : NestedLeafDecoder.readDate(batch, child.projectedCol(), idx, child.schema());
+        return idx < 0 ? null : NestedLeafDecoder.readDate(batch, batch.refineProjCol(child.projectedCol()), idx, child.schema());
     }
 
     private LocalTime readTime(TopLevelFieldMap.FieldDesc.Primitive child) {
         int idx = valueIndexOrNull(child);
-        return idx < 0 ? null : NestedLeafDecoder.readTime(batch, child.projectedCol(), idx, child.schema());
+        return idx < 0 ? null : NestedLeafDecoder.readTime(batch, batch.refineProjCol(child.projectedCol()), idx, child.schema());
     }
 
     private Instant readTimestamp(TopLevelFieldMap.FieldDesc.Primitive child) {
         int idx = valueIndexOrNull(child);
-        return idx < 0 ? null : NestedLeafDecoder.readTimestamp(batch, child.projectedCol(), idx, child.schema());
+        return idx < 0 ? null : NestedLeafDecoder.readTimestamp(batch, batch.refineProjCol(child.projectedCol()), idx, child.schema());
     }
 
     private LocalDateTime readLocalTimestamp(TopLevelFieldMap.FieldDesc.Primitive child) {
         int idx = valueIndexOrNull(child);
         return idx < 0
                 ? null
-                : NestedLeafDecoder.readLocalTimestamp(batch, child.projectedCol(), idx, child.schema());
+                : NestedLeafDecoder.readLocalTimestamp(batch, batch.refineProjCol(child.projectedCol()), idx, child.schema());
     }
 
     private BigDecimal readDecimal(TopLevelFieldMap.FieldDesc.Primitive child) {
         int idx = valueIndexOrNull(child);
-        return idx < 0 ? null : NestedLeafDecoder.readDecimal(batch, child.projectedCol(), idx, child.schema());
+        return idx < 0 ? null : NestedLeafDecoder.readDecimal(batch, batch.refineProjCol(child.projectedCol()), idx, child.schema());
     }
 
     private UUID readUuid(TopLevelFieldMap.FieldDesc.Primitive child) {
         int idx = valueIndexOrNull(child);
-        return idx < 0 ? null : NestedLeafDecoder.readUuid(batch, child.projectedCol(), idx, child.schema());
+        return idx < 0 ? null : NestedLeafDecoder.readUuid(batch, batch.refineProjCol(child.projectedCol()), idx, child.schema());
     }
 
     private PqInterval readInterval(TopLevelFieldMap.FieldDesc.Primitive child) {
         int idx = valueIndexOrNull(child);
-        return idx < 0 ? null : NestedLeafDecoder.readInterval(batch, child.projectedCol(), idx, child.schema());
+        return idx < 0 ? null : NestedLeafDecoder.readInterval(batch, batch.refineProjCol(child.projectedCol()), idx, child.schema());
     }
 
     private PqStruct readStruct(TopLevelFieldMap.FieldDesc.Struct structDesc) {
@@ -547,8 +547,8 @@ final class PqStructImpl implements PqStruct {
     private boolean isFieldNull(TopLevelFieldMap.FieldDesc child) {
         return switch (child) {
             case TopLevelFieldMap.FieldDesc.Primitive p -> {
-                int idx = resolveValueIndex(p.projectedCol());
-                yield batch.isElementNull(p.projectedCol(), idx);
+                int idx = resolveValueIndex(batch.refineProjCol(p.projectedCol()));
+                yield batch.isElementNull(batch.refineProjCol(p.projectedCol()), idx);
             }
             case TopLevelFieldMap.FieldDesc.Struct s -> isStructNull(s);
             case TopLevelFieldMap.FieldDesc.ListOf l ->
@@ -581,7 +581,7 @@ final class PqStructImpl implements PqStruct {
         // the leaf position. In position mode, `valueIndex` is a rep-level ordinal
         // at the struct's level, so chase through the leaf column's multi-level
         // offsets to reach the leaf position for this struct instance.
-        int leafCol = structDesc.firstLeafProjCol();
+        int leafCol = batch.refineProjCol(structDesc.firstLeafProjCol());
         if (leafCol < 0) {
             return false;
         }
@@ -603,13 +603,13 @@ final class PqStructImpl implements PqStruct {
     private Object readValueImpl(TopLevelFieldMap.FieldDesc child, boolean decode) {
         return switch (child) {
             case TopLevelFieldMap.FieldDesc.Primitive p -> {
-                int idx = resolveValueIndex(p.projectedCol());
-                if (batch.isElementNull(p.projectedCol(), idx)) {
+                int idx = resolveValueIndex(batch.refineProjCol(p.projectedCol()));
+                if (batch.isElementNull(batch.refineProjCol(p.projectedCol()), idx)) {
                     yield null;
                 }
                 yield decode
-                        ? batch.decodeLeaf(p.projectedCol(), idx, p.schema())
-                        : batch.getValue(p.projectedCol(), idx);
+                        ? batch.decodeLeaf(batch.refineProjCol(p.projectedCol()), idx, p.schema())
+                        : batch.getValue(batch.refineProjCol(p.projectedCol()), idx);
             }
             case TopLevelFieldMap.FieldDesc.Struct s -> {
                 if (isStructNull(s)) {

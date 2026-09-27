@@ -63,8 +63,8 @@ public final class VariantShredReassembler {
     private int writeLevel(ShredLevel level, NestedBatchIndex batch, int rowIndex) {
         int before = pos;
         int valueCol = level.valueCol();
-        int valueIdx = valueCol >= 0 ? batch.getValueIndex(valueCol, rowIndex) : -1;
-        boolean valuePresent = valueCol >= 0 && batch.getDefLevel(valueCol, valueIdx) >= level.valueDefLevel();
+        int valueIdx = valueCol >= 0 ? batch.getValueIndex(batch.refineProjCol(valueCol), rowIndex) : -1;
+        boolean valuePresent = valueCol >= 0 && batch.getDefLevel(batch.refineProjCol(valueCol), valueIdx) >= level.valueDefLevel();
 
         if (level.typed() == null) {
             // Purely untyped level: only `value` carries data.
@@ -86,10 +86,10 @@ public final class VariantShredReassembler {
                                     NestedBatchIndex batch, int rowIndex,
                                     int valueCol, int valueIdx, boolean valuePresent) {
         int before = pos;
-        int typedIdx = typed.col() >= 0 ? batch.getValueIndex(typed.col(), rowIndex) : -1;
+        int typedIdx = typed.col() >= 0 ? batch.getValueIndex(batch.refineProjCol(typed.col()), rowIndex) : -1;
         boolean typedPresent = typed.col() >= 0
-                && batch.getDefLevel(typed.col(), typedIdx) >= typed.defLevel()
-                && !batch.isElementNull(typed.col(), typedIdx);
+                && batch.getDefLevel(batch.refineProjCol(typed.col()), typedIdx) >= typed.defLevel()
+                && !batch.isElementNull(batch.refineProjCol(typed.col()), typedIdx);
 
         if (typedPresent) {
             encodePrimitive(typed, batch, typedIdx);
@@ -391,8 +391,8 @@ public final class VariantShredReassembler {
         // probing the leaf's def level at the record's first-leaf value index:
         // present-but-empty lists still have a synthetic entry with def level
         // equal to the list group's max def level; null lists have lower.
-        int probeIdx = batch.getValueIndex(leafCol, rowIndex);
-        boolean listPresent = batch.getDefLevel(leafCol, probeIdx) >= typed.listDefLevel();
+        int probeIdx = batch.getValueIndex(batch.refineProjCol(leafCol), rowIndex);
+        boolean listPresent = batch.getDefLevel(batch.refineProjCol(leafCol), probeIdx) >= typed.listDefLevel();
 
         if (!listPresent) {
             if (valuePresent) {
@@ -401,15 +401,15 @@ public final class VariantShredReassembler {
             return -1;
         }
 
-        int listStart = batch.getListStart(leafCol, rowIndex);
-        int listEnd = batch.getListEnd(leafCol, rowIndex);
+        int listStart = batch.getListStart(batch.refineProjCol(leafCol), rowIndex);
+        int listEnd = batch.getListEnd(batch.refineProjCol(leafCol), rowIndex);
 
         List<byte[]> elements = new ArrayList<>(listEnd - listStart);
         for (int i = listStart; i < listEnd; i++) {
             // Synthetic placeholder rows carry a def level below the element's
             // max def level — they mark present-but-empty lists rather than a
             // real element. Skip them.
-            if (batch.getDefLevel(leafCol, i) < typed.elementDefLevel()) {
+            if (batch.getDefLevel(batch.refineProjCol(leafCol), i) < typed.elementDefLevel()) {
                 continue;
             }
             int snap = pos;
@@ -449,8 +449,8 @@ public final class VariantShredReassembler {
             if (leaf < 0) {
                 continue;
             }
-            int idx = batch.getValueIndex(leaf, rowIndex);
-            if (batch.getDefLevel(leaf, idx) >= containerDefLevel) {
+            int idx = batch.getValueIndex(batch.refineProjCol(leaf), rowIndex);
+            if (batch.getDefLevel(batch.refineProjCol(leaf), idx) >= containerDefLevel) {
                 return true;
             }
         }
@@ -484,7 +484,7 @@ public final class VariantShredReassembler {
     private int writeElementAt(ShredLevel element, NestedBatchIndex batch, int elementIdx) {
         int before = pos;
         int valueCol = element.valueCol();
-        boolean valuePresent = valueCol >= 0 && batch.getDefLevel(valueCol, elementIdx) >= element.valueDefLevel();
+        boolean valuePresent = valueCol >= 0 && batch.getDefLevel(batch.refineProjCol(valueCol), elementIdx) >= element.valueDefLevel();
 
         if (element.typed() == null) {
             if (valuePresent) {
@@ -509,8 +509,8 @@ public final class VariantShredReassembler {
         int before = pos;
         int typedCol = typed.col();
         if (typedCol >= 0
-                && batch.getDefLevel(typedCol, elementIdx) >= typed.defLevel()
-                && !batch.isElementNull(typedCol, elementIdx)) {
+                && batch.getDefLevel(batch.refineProjCol(typedCol), elementIdx) >= typed.defLevel()
+                && !batch.isElementNull(batch.refineProjCol(typedCol), elementIdx)) {
             encodePrimitive(typed, batch, elementIdx);
             return pos - before;
         }
@@ -570,21 +570,21 @@ public final class VariantShredReassembler {
         if (innerLeaf < 0) {
             return valuePresent ? writeRawValue(batch, valueCol, elementIdx) : -1;
         }
-        int innerStart = batch.getLevelStart(innerLeaf, 1, elementIdx);
-        int innerEnd = batch.getLevelEnd(innerLeaf, 1, elementIdx);
+        int innerStart = batch.getLevelStart(batch.refineProjCol(innerLeaf), 1, elementIdx);
+        int innerEnd = batch.getLevelEnd(batch.refineProjCol(innerLeaf), 1, elementIdx);
         // Present-but-empty lists still carry a synthetic entry at `innerStart`
         // whose def level reports the list's max def level; truly-null lists
         // carry a lower def level at that position. `innerStart == innerEnd`
         // just means there are no real elements — the synthetic entry (if any)
         // sits at `innerStart`, which is the valid probe position either way.
         boolean listPresent = innerStart < batch.valueCounts[innerLeaf]
-                && batch.getDefLevel(innerLeaf, innerStart) >= typed.listDefLevel();
+                && batch.getDefLevel(batch.refineProjCol(innerLeaf), innerStart) >= typed.listDefLevel();
         if (!listPresent) {
             return valuePresent ? writeRawValue(batch, valueCol, elementIdx) : -1;
         }
         List<byte[]> inner = new ArrayList<>(innerEnd - innerStart);
         for (int i = innerStart; i < innerEnd; i++) {
-            if (batch.getDefLevel(innerLeaf, i) < typed.elementDefLevel()) {
+            if (batch.getDefLevel(batch.refineProjCol(innerLeaf), i) < typed.elementDefLevel()) {
                 continue;
             }
             int snap = pos;
@@ -620,7 +620,7 @@ public final class VariantShredReassembler {
 
 
     private static byte[] rawBytes(NestedBatchIndex batch, int valueCol, int valueIdx) {
-        return batch.getBinary(valueCol, valueIdx);
+        return batch.getBinary(batch.refineProjCol(valueCol), valueIdx);
     }
 
     private static long bytesToLongBE(byte[] buf, int offset) {

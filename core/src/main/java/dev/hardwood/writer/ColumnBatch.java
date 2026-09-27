@@ -76,7 +76,7 @@ public final class ColumnBatch {
     private final FileSchema schema;
 
     /// The range each column's annotation declares, resolved once per file by the writer.
-    private final LogicalTypeValueRange @SameLen("sources") [] ranges;
+    private final LogicalTypeValueRange[] ranges;
 
     private final ColumnSource[] sources;
     private final Validity @SameLen("sources") [] validities;
@@ -95,7 +95,7 @@ public final class ColumnBatch {
         }
         this.ranges = ranges;
         this.sources = new ColumnSource[schema.getColumnCount()];
-        this.validities = new Validity[schema.getColumnCount()];
+        this.validities = new Validity[this.sources.length];
     }
 
     /// Sets the per-instance nulls of an `OPTIONAL` `struct` group, addressed by its

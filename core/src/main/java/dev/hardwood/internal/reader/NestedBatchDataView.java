@@ -91,8 +91,7 @@ public final class NestedBatchDataView {
     /// predicate columns of an exact-filtered `ColumnReader`, by the
     /// `SelectionEngine`.
     public void setBatchData(NestedBatch[] batches, ColumnSchema[] columnSchemas, String fileName) {
-        this.batchIndex = NestedBatchIndex.buildFromBatches(
-                batches, columnSchemas, schema, projectedSchema, fieldMap);
+        this.batchIndex = NestedBatchIndex.buildFromBatches(batches, columnSchemas, projectedSchema);
         this.currentFileName = fileName;
         cacheFieldArrays();
     }
@@ -142,8 +141,8 @@ public final class NestedBatchDataView {
     private boolean isFieldNull(TopLevelFieldMap.FieldDesc desc) {
         return switch (desc) {
             case TopLevelFieldMap.FieldDesc.Primitive p -> {
-                int valueIdx = cachedValueIndex[p.projectedCol()];
-                yield batchIndex.isElementNull(p.projectedCol(), valueIdx);
+                int valueIdx = cachedValueIndex[batchIndex.refineProjCol(p.projectedCol())];
+                yield batchIndex.isElementNull(batchIndex.refineProjCol(p.projectedCol()), valueIdx);
             }
             case TopLevelFieldMap.FieldDesc.Struct s -> isStructNull(s);
             case TopLevelFieldMap.FieldDesc.ListOf l ->
@@ -162,7 +161,7 @@ public final class NestedBatchDataView {
             return true;
         }
         int valueIdx = cachedValueIndex[col];
-        int defLevel = batchIndex.getDefLevel(col, valueIdx);
+        int defLevel = batchIndex.getDefLevel(batchIndex.refineProjCol(col), valueIdx);
         return defLevel < desc.nullDefLevel();
     }
 
@@ -170,7 +169,7 @@ public final class NestedBatchDataView {
         int primCol = structDesc.firstPrimitiveCol();
         if (primCol >= 0) {
             int valueIdx = cachedValueIndex[primCol];
-            int defLevel = batchIndex.getDefLevel(primCol, valueIdx);
+            int defLevel = batchIndex.getDefLevel(batchIndex.refineProjCol(primCol), valueIdx);
             return defLevel < structDesc.schema().maxDefinitionLevel();
         }
         // Top-level struct with no direct primitive child: use the first leaf at
@@ -182,7 +181,7 @@ public final class NestedBatchDataView {
             return false;
         }
         int valueIdx = cachedValueIndex[leafCol];
-        int defLevel = batchIndex.getDefLevel(leafCol, valueIdx);
+        int defLevel = batchIndex.getDefLevel(batchIndex.refineProjCol(leafCol), valueIdx);
         return defLevel < structDesc.schema().maxDefinitionLevel();
     }
 
@@ -190,7 +189,7 @@ public final class NestedBatchDataView {
 
     public int getInt(String name) {
         TopLevelFieldMap.FieldDesc.Primitive p = lookupPrimitive(name);
-        int projCol = p.projectedCol();
+        int projCol = batchIndex.refineProjCol(p.projectedCol());
         int valueIdx = cachedValueIndex[projCol];
         if (batchIndex.isElementNull(projCol, valueIdx)) {
             throw new NullPointerException(prefix() + "Column '" + name + "' is null");
@@ -200,7 +199,7 @@ public final class NestedBatchDataView {
 
     public long getLong(String name) {
         TopLevelFieldMap.FieldDesc.Primitive p = lookupPrimitive(name);
-        int projCol = p.projectedCol();
+        int projCol = batchIndex.refineProjCol(p.projectedCol());
         int valueIdx = cachedValueIndex[projCol];
         if (batchIndex.isElementNull(projCol, valueIdx)) {
             throw new NullPointerException(prefix() + "Column '" + name + "' is null");
@@ -210,7 +209,7 @@ public final class NestedBatchDataView {
 
     public float getFloat(String name) {
         TopLevelFieldMap.FieldDesc.Primitive p = lookupPrimitive(name);
-        int projCol = p.projectedCol();
+        int projCol = batchIndex.refineProjCol(p.projectedCol());
         int valueIdx = cachedValueIndex[projCol];
         if (batchIndex.isElementNull(projCol, valueIdx)) {
             throw new NullPointerException(prefix() + "Column '" + name + "' is null");
@@ -229,7 +228,7 @@ public final class NestedBatchDataView {
 
     public double getDouble(String name) {
         TopLevelFieldMap.FieldDesc.Primitive p = lookupPrimitive(name);
-        int projCol = p.projectedCol();
+        int projCol = batchIndex.refineProjCol(p.projectedCol());
         int valueIdx = cachedValueIndex[projCol];
         if (batchIndex.isElementNull(projCol, valueIdx)) {
             throw new NullPointerException(prefix() + "Column '" + name + "' is null");
@@ -239,7 +238,7 @@ public final class NestedBatchDataView {
 
     public boolean getBoolean(String name) {
         TopLevelFieldMap.FieldDesc.Primitive p = lookupPrimitive(name);
-        int projCol = p.projectedCol();
+        int projCol = batchIndex.refineProjCol(p.projectedCol());
         int valueIdx = cachedValueIndex[projCol];
         if (batchIndex.isElementNull(projCol, valueIdx)) {
             throw new NullPointerException(prefix() + "Column '" + name + "' is null");
@@ -487,7 +486,7 @@ public final class NestedBatchDataView {
     }
 
     private String getString(TopLevelFieldMap.FieldDesc.Primitive p) {
-        int projCol = p.projectedCol();
+        int projCol = batchIndex.refineProjCol(p.projectedCol());
         int valueIdx = cachedValueIndex[projCol];
         if (batchIndex.isElementNull(projCol, valueIdx)) {
             return null;
@@ -496,7 +495,7 @@ public final class NestedBatchDataView {
     }
 
     private byte[] getBinary(TopLevelFieldMap.FieldDesc.Primitive p) {
-        int projCol = p.projectedCol();
+        int projCol = batchIndex.refineProjCol(p.projectedCol());
         int valueIdx = cachedValueIndex[projCol];
         if (batchIndex.isElementNull(projCol, valueIdx)) {
             return null;
@@ -506,7 +505,7 @@ public final class NestedBatchDataView {
 
     /// The value index of `p` in the current record, or -1 when the field is null.
     private int valueIndexOrNull(TopLevelFieldMap.FieldDesc.Primitive p) {
-        int projCol = p.projectedCol();
+        int projCol = batchIndex.refineProjCol(p.projectedCol());
         int valueIdx = cachedValueIndex[projCol];
         return batchIndex.isElementNull(projCol, valueIdx) ? -1 : valueIdx;
     }
@@ -517,7 +516,7 @@ public final class NestedBatchDataView {
             return null;
         }
         try {
-            return NestedLeafDecoder.readDate(batchIndex, p.projectedCol(), valueIdx, p.schema());
+            return NestedLeafDecoder.readDate(batchIndex, batchIndex.refineProjCol(p.projectedCol()), valueIdx, p.schema());
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);
@@ -530,7 +529,7 @@ public final class NestedBatchDataView {
             return null;
         }
         try {
-            return NestedLeafDecoder.readTime(batchIndex, p.projectedCol(), valueIdx, p.schema());
+            return NestedLeafDecoder.readTime(batchIndex, batchIndex.refineProjCol(p.projectedCol()), valueIdx, p.schema());
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);
@@ -546,7 +545,7 @@ public final class NestedBatchDataView {
             return null;
         }
         try {
-            return NestedLeafDecoder.readTimestamp(batchIndex, p.projectedCol(), valueIdx, p.schema());
+            return NestedLeafDecoder.readTimestamp(batchIndex, batchIndex.refineProjCol(p.projectedCol()), valueIdx, p.schema());
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);
@@ -559,7 +558,7 @@ public final class NestedBatchDataView {
             return null;
         }
         try {
-            return NestedLeafDecoder.readLocalTimestamp(batchIndex, p.projectedCol(), valueIdx, p.schema());
+            return NestedLeafDecoder.readLocalTimestamp(batchIndex, batchIndex.refineProjCol(p.projectedCol()), valueIdx, p.schema());
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);
@@ -572,7 +571,7 @@ public final class NestedBatchDataView {
             return null;
         }
         try {
-            return NestedLeafDecoder.readDecimal(batchIndex, p.projectedCol(), valueIdx, p.schema());
+            return NestedLeafDecoder.readDecimal(batchIndex, batchIndex.refineProjCol(p.projectedCol()), valueIdx, p.schema());
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);
@@ -585,7 +584,7 @@ public final class NestedBatchDataView {
             return null;
         }
         try {
-            return NestedLeafDecoder.readUuid(batchIndex, p.projectedCol(), valueIdx, p.schema());
+            return NestedLeafDecoder.readUuid(batchIndex, batchIndex.refineProjCol(p.projectedCol()), valueIdx, p.schema());
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);
@@ -598,7 +597,7 @@ public final class NestedBatchDataView {
             return null;
         }
         try {
-            return NestedLeafDecoder.readInterval(batchIndex, p.projectedCol(), valueIdx, p.schema());
+            return NestedLeafDecoder.readInterval(batchIndex, batchIndex.refineProjCol(p.projectedCol()), valueIdx, p.schema());
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);
@@ -616,13 +615,13 @@ public final class NestedBatchDataView {
     private Object readValueImpl(TopLevelFieldMap.FieldDesc desc, boolean decode) {
         return switch (desc) {
             case TopLevelFieldMap.FieldDesc.Primitive p -> {
-                int valueIdx = cachedValueIndex[p.projectedCol()];
-                if (batchIndex.isElementNull(p.projectedCol(), valueIdx)) {
+                int valueIdx = cachedValueIndex[batchIndex.refineProjCol(p.projectedCol())];
+                if (batchIndex.isElementNull(batchIndex.refineProjCol(p.projectedCol()), valueIdx)) {
                     yield null;
                 }
                 yield decode
-                        ? batchIndex.decodeLeaf(p.projectedCol(), valueIdx, p.schema())
-                        : batchIndex.getValue(p.projectedCol(), valueIdx);
+                        ? batchIndex.decodeLeaf(batchIndex.refineProjCol(p.projectedCol()), valueIdx, p.schema())
+                        : batchIndex.getValue(batchIndex.refineProjCol(p.projectedCol()), valueIdx);
             }
             case TopLevelFieldMap.FieldDesc.Struct s -> {
                 if (isStructNull(s)) {
@@ -673,7 +672,7 @@ public final class NestedBatchDataView {
                     "Variant column '" + desc.schema().name() + "' requires its 'metadata' child in the projection");
         }
         int metaIdx = cachedValueIndex[desc.metadataCol()];
-        byte[] metadataBytes = batchIndex.getBinary(desc.metadataCol(), metaIdx);
+        byte[] metadataBytes = batchIndex.getBinary(batchIndex.refineProjCol(desc.metadataCol()), metaIdx);
 
         // Shredded when the top-level ShredLevel has a typed_value component.
         if (desc.root().typed() != null) {
@@ -696,7 +695,7 @@ public final class NestedBatchDataView {
                     "Variant column '" + desc.schema().name() + "' requires its 'value' child in the projection");
         }
         int valIdx = cachedValueIndex[valueCol];
-        byte[] value = batchIndex.getBinary(valueCol, valIdx);
+        byte[] value = batchIndex.getBinary(batchIndex.refineProjCol(valueCol), valIdx);
         return new PqVariantImpl(metadataBytes, value);
     }
 }

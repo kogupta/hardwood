@@ -76,7 +76,7 @@ final class PqListImpl implements PqList {
     static boolean isListNull(NestedBatchIndex batch,
                               TopLevelFieldMap.FieldDesc.ListOf listDesc,
                               int rowIndex, int valueIndex) {
-        int projCol = listDesc.firstLeafProjCol();
+        int projCol = batch.refineProjCol(listDesc.firstLeafProjCol());
         int valIdx = resolveFirstValueIndex(batch, listDesc, rowIndex, valueIndex);
         int defLevel = batch.getDefLevel(projCol, valIdx);
         return defLevel < listDesc.nullDefLevel();
@@ -123,11 +123,11 @@ final class PqListImpl implements PqList {
             // nullness is governed by the group's own definition level, not the leaf
             // column's element-null bitmap (which only flags a null primitive value).
             if (elementSchema instanceof SchemaNode.GroupNode group) {
-                int projCol = listDesc.firstLeafProjCol();
+                int projCol = batch.refineProjCol(listDesc.firstLeafProjCol());
                 int defLevel = batch.getDefLevel(projCol, start + index);
                 return defLevel < group.maxDefinitionLevel();
             }
-            return batch.isElementNull(listDesc.firstLeafProjCol(), start + index);
+            return batch.isElementNull(batch.refineProjCol(listDesc.firstLeafProjCol()), start + index);
         }
         return isNestedElementNull(index);
     }
@@ -137,7 +137,7 @@ final class PqListImpl implements PqList {
         if (elementSchema instanceof SchemaNode.GroupNode) {
             return new NestedList<>(this::get);
         }
-        int projCol = listDesc.firstLeafProjCol();
+        int projCol = batch.refineProjCol(listDesc.firstLeafProjCol());
         if (LeafKind.of(elementSchema) == LeafKind.STRING) {
             return new LeafList<>(pos -> batch.getString(projCol, pos));
         }
@@ -163,7 +163,7 @@ final class PqListImpl implements PqList {
                 return createInnerMap(index);
             }
         }
-        int projCol = listDesc.firstLeafProjCol();
+        int projCol = batch.refineProjCol(listDesc.firstLeafProjCol());
         int valueIdx = start + index;
         if (batch.isElementNull(projCol, valueIdx)) {
             return null;
@@ -176,7 +176,7 @@ final class PqListImpl implements PqList {
         if (elementSchema instanceof SchemaNode.GroupNode) {
             return new NestedList<>(this::getRaw);
         }
-        int projCol = listDesc.firstLeafProjCol();
+        int projCol = batch.refineProjCol(listDesc.firstLeafProjCol());
         return new LeafList<>(pos -> batch.getValue(projCol, pos));
     }
 
@@ -184,12 +184,12 @@ final class PqListImpl implements PqList {
 
     @Override
     public PqIntList ints() {
-        return new PqIntListImpl(batch, listDesc.firstLeafProjCol(), start, end);
+        return new PqIntListImpl(batch, batch.refineProjCol(listDesc.firstLeafProjCol()), start, end);
     }
 
     @Override
     public PqLongList longs() {
-        return new PqLongListImpl(batch, listDesc.firstLeafProjCol(), start, end);
+        return new PqLongListImpl(batch, batch.refineProjCol(listDesc.firstLeafProjCol()), start, end);
     }
 
     @Override
@@ -198,7 +198,7 @@ final class PqListImpl implements PqList {
         // slot; plain FLOAT comes straight off a float[]. Ruling out FLOAT first lets the
         // shared guard name an element that is neither, rather than leaving it to the cast
         // below — and it decides once per view, as the element's annotation is decided once.
-        int projCol = listDesc.firstLeafProjCol();
+        int projCol = batch.refineProjCol(listDesc.firstLeafProjCol());
         SchemaNode.PrimitiveNode leaf = requirePrimitiveElement();
         if (leaf.type() != PhysicalType.FLOAT) {
             batch.requireFloatAccess(leaf);
@@ -210,12 +210,12 @@ final class PqListImpl implements PqList {
 
     @Override
     public PqDoubleList doubles() {
-        return new PqDoubleListImpl(batch, listDesc.firstLeafProjCol(), start, end);
+        return new PqDoubleListImpl(batch, batch.refineProjCol(listDesc.firstLeafProjCol()), start, end);
     }
 
     @Override
     public List<Boolean> booleans() {
-        int projCol = listDesc.firstLeafProjCol();
+        int projCol = batch.refineProjCol(listDesc.firstLeafProjCol());
         return new LeafList<>(pos -> ((boolean[]) batch.valueArrays[projCol])[pos]);
     }
 
@@ -223,27 +223,27 @@ final class PqListImpl implements PqList {
 
     @Override
     public List<String> strings() {
-        int projCol = listDesc.firstLeafProjCol();
+        int projCol = batch.refineProjCol(listDesc.firstLeafProjCol());
         LogicalAccessorKind.requireText(batch.fileName, requirePrimitiveElement());
         return new LeafList<>(pos -> batch.getString(projCol, pos));
     }
 
     @Override
     public List<byte[]> binaries() {
-        int projCol = listDesc.firstLeafProjCol();
+        int projCol = batch.refineProjCol(listDesc.firstLeafProjCol());
         return new LeafList<>(pos -> batch.getBinary(projCol, pos));
     }
 
     @Override
     public List<LocalDate> dates() {
-        int projCol = listDesc.firstLeafProjCol();
+        int projCol = batch.refineProjCol(listDesc.firstLeafProjCol());
         LogicalAccessorKind.requireDate(batch.fileName, requirePrimitiveElement());
         return new LeafList<>(pos -> NestedLeafDecoder.dateAt(batch, projCol, pos));
     }
 
     @Override
     public List<LocalTime> times() {
-        int projCol = listDesc.firstLeafProjCol();
+        int projCol = batch.refineProjCol(listDesc.firstLeafProjCol());
         SchemaNode.PrimitiveNode leaf = requirePrimitiveElement();
         PhysicalType type = leaf.type();
         LogicalType.TimeUnit unit = ((LogicalType.TimeType) leaf.logicalType()).unit();
@@ -253,7 +253,7 @@ final class PqListImpl implements PqList {
     @Override
     public List<Instant> timestamps() {
         TimestampAccessorKind.require(elementSchema, true);
-        int projCol = listDesc.firstLeafProjCol();
+        int projCol = batch.refineProjCol(listDesc.firstLeafProjCol());
         SchemaNode.PrimitiveNode leaf = requirePrimitiveElement();
         if (NestedLeafDecoder.isInt96Timestamp(leaf)) {
             return new LeafList<>(pos -> NestedLeafDecoder.int96TimestampAt(batch, projCol, pos));
@@ -266,7 +266,7 @@ final class PqListImpl implements PqList {
     @Override
     public List<LocalDateTime> localTimestamps() {
         TimestampAccessorKind.require(elementSchema, false);
-        int projCol = listDesc.firstLeafProjCol();
+        int projCol = batch.refineProjCol(listDesc.firstLeafProjCol());
         SchemaNode.PrimitiveNode leaf = requirePrimitiveElement();
         PhysicalType type = leaf.type();
         LogicalType.TimeUnit unit = ((LogicalType.TimestampType) leaf.logicalType()).unit();
@@ -275,7 +275,7 @@ final class PqListImpl implements PqList {
 
     @Override
     public List<BigDecimal> decimals() {
-        int projCol = listDesc.firstLeafProjCol();
+        int projCol = batch.refineProjCol(listDesc.firstLeafProjCol());
         SchemaNode.PrimitiveNode leaf = requirePrimitiveElement();
         PhysicalType type = leaf.type();
         int scale = ((LogicalType.DecimalType) leaf.logicalType()).scale();
@@ -284,14 +284,14 @@ final class PqListImpl implements PqList {
 
     @Override
     public List<UUID> uuids() {
-        int projCol = listDesc.firstLeafProjCol();
+        int projCol = batch.refineProjCol(listDesc.firstLeafProjCol());
         LogicalAccessorKind.requireUuid(batch.fileName, requirePrimitiveElement());
         return new LeafList<>(pos -> NestedLeafDecoder.uuidAt(batch, projCol, pos));
     }
 
     @Override
     public List<PqInterval> intervals() {
-        int projCol = listDesc.firstLeafProjCol();
+        int projCol = batch.refineProjCol(listDesc.firstLeafProjCol());
         LogicalAccessorKind.requireInterval(batch.fileName, requirePrimitiveElement());
         return new LeafList<>(pos -> NestedLeafDecoder.intervalAt(batch, projCol, pos));
     }
@@ -325,7 +325,7 @@ final class PqListImpl implements PqList {
     private static ListRange computeRange(NestedBatchIndex batch,
                                           TopLevelFieldMap.FieldDesc.ListOf listDesc,
                                           int rowIndex, int valueIndex) {
-        int projCol = listDesc.firstLeafProjCol();
+        int projCol = batch.refineProjCol(listDesc.firstLeafProjCol());
         int mlLevel = listDesc.schema().maxRepetitionLevel();
         int leafMaxRep = batch.getMaxRepLevel(projCol);
 
@@ -360,7 +360,7 @@ final class PqListImpl implements PqList {
     private static int resolveFirstValueIndex(NestedBatchIndex batch,
                                               TopLevelFieldMap.FieldDesc.ListOf listDesc,
                                               int rowIndex, int valueIndex) {
-        int projCol = listDesc.firstLeafProjCol();
+        int projCol = batch.refineProjCol(listDesc.firstLeafProjCol());
         int mlLevel = listDesc.schema().maxRepetitionLevel();
         int leafMaxRep = batch.getMaxRepLevel(projCol);
 
@@ -386,7 +386,7 @@ final class PqListImpl implements PqList {
     // ==================== Internal: Element Access ====================
 
     private Object getLeafValue(int index) {
-        int projCol = listDesc.firstLeafProjCol();
+        int projCol = batch.refineProjCol(listDesc.firstLeafProjCol());
         int valueIdx = start + index;
         if (batch.isElementNull(projCol, valueIdx)) {
             return null;
@@ -412,7 +412,7 @@ final class PqListImpl implements PqList {
         if (!(elementSchema instanceof SchemaNode.GroupNode group)) {
             return false;
         }
-        int projCol = listDesc.firstLeafProjCol();
+        int projCol = batch.refineProjCol(listDesc.firstLeafProjCol());
         int itemIndex = start + index;
         int firstValue = resolveFirstValue(batch, projCol, itemIndex, subLevel - 1,
                 batch.getMaxRepLevel(projCol));
@@ -450,7 +450,7 @@ final class PqListImpl implements PqList {
             innerListDesc = DescriptorBuilder.buildListDesc(group, batch.projectedSchema);
         }
 
-        int projCol = listDesc.firstLeafProjCol();
+        int projCol = batch.refineProjCol(listDesc.firstLeafProjCol());
         int itemIndex = start + index;
         int innerStart = batch.getLevelStart(projCol, subLevel, itemIndex);
         int innerEnd = batch.getLevelEnd(projCol, subLevel, itemIndex);
@@ -599,7 +599,7 @@ final class PqListImpl implements PqList {
         public T get(int index) {
             Objects.checkIndex(index, size());
             int pos = start + index;
-            if (batch.isElementNull(listDesc.firstLeafProjCol(), pos)) {
+            if (batch.isElementNull(batch.refineProjCol(listDesc.firstLeafProjCol()), pos)) {
                 return null;
             }
             return reader.apply(pos);
