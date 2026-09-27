@@ -102,6 +102,62 @@ class RleBitPackingHybridDecoderDictionaryBoundsTest {
         assertThat(output).containsExactly(200, 200, 200, 200);
     }
 
+    @Test
+    void rejectsOutOfRangeIndexForLongsWithDefinitionLevels() {
+        byte[] encoded = encodeRleRun(5, 4, 3);
+        long[] dictionary = { 10, 20 };
+        long[] output = new long[4];
+        int[] defLevels = { 1, 1, 1, 1 };
+
+        Throwable thrown = catchThrowable(() ->
+                decoder(encoded, 3).readDictionaryLongs(output, dictionary, defLevels, 1));
+
+        assertThat(thrown).isInstanceOf(ParquetReadException.class)
+                .hasMessage("Invalid dictionary index 5 at position 0: dictionary has 2 entries");
+    }
+
+    @Test
+    void rejectsOutOfRangeIndexForDoublesWithDefinitionLevels() {
+        byte[] encoded = encodeRleRun(3, 2, 2);
+        double[] dictionary = { 0.5, 1.5 };
+        double[] output = new double[2];
+        int[] defLevels = { 1, 1 };
+
+        Throwable thrown = catchThrowable(() ->
+                decoder(encoded, 2).readDictionaryDoubles(output, dictionary, defLevels, 1));
+
+        assertThat(thrown).isInstanceOf(ParquetReadException.class)
+                .hasMessage("Invalid dictionary index 3 at position 0: dictionary has 2 entries");
+    }
+
+    @Test
+    void rejectsOutOfRangeIndexForIntsWithoutDefinitionLevels() {
+        byte[] encoded = encodeRleRun(4, 3, 3);
+        int[] dictionary = { 0, 1 };
+        int[] output = new int[3];
+
+        Throwable thrown = catchThrowable(() ->
+                decoder(encoded, 3).readDictionaryInts(output, dictionary, null, 0));
+
+        assertThat(thrown).isInstanceOf(ParquetReadException.class)
+                .hasMessage("Invalid dictionary index 4 at position 0: dictionary has 2 entries");
+    }
+
+    @Test
+    void rejectsOutOfRangeIndexForByteArraysWithDefinitionLevels() {
+        byte[] encoded = encodeRleRun(6, 3, 3);
+        byte[][] dictionary = { { 1 }, { 2 } };
+        byte[][] output = new byte[3][];
+        int[] outDictIndices = new int[3];
+        int[] defLevels = { 1, 1, 1 };
+
+        Throwable thrown = catchThrowable(() ->
+                decoder(encoded, 3).readDictionaryByteArrays(output, outDictIndices, dictionary, defLevels, 1));
+
+        assertThat(thrown).isInstanceOf(ParquetReadException.class)
+                .hasMessage("Invalid dictionary index 6 at position 0: dictionary has 2 entries");
+    }
+
     private static RleBitPackingHybridDecoder decoder(byte[] data, int bitWidth) {
         return new RleBitPackingHybridDecoder(data, 0, data.length, bitWidth);
     }

@@ -7,6 +7,8 @@
  */
 package dev.hardwood.internal.encoding;
 
+import java.nio.ByteBuffer;
+
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.reader.ParquetReadException;
@@ -16,8 +18,8 @@ import static org.assertj.core.api.Assertions.catchThrowable;
 
 /// Malformed DELTA_LENGTH_BYTE_ARRAY and DELTA_BYTE_ARRAY streams fail fast
 /// with controlled exceptions. The streams are composed from the real
-/// encoders: the encoders can never produce these values, which is exactly
-/// why the decoders must reject them when a file does.
+/// encoders: a well-formed Parquet stream never carries these values, which
+/// is exactly why the decoders must reject them when a file does.
 class DeltaByteArrayDecoderBoundsTest {
 
     @Test
@@ -30,6 +32,25 @@ class DeltaByteArrayDecoderBoundsTest {
 
         assertThat(thrown).isInstanceOf(ParquetReadException.class)
                 .hasMessage("Negative byte array length: -3");
+    }
+
+    @Test
+    void rejectsOverlongLengthWithoutIntegerOverflow() {
+        // `pos + length` wraps for a length near Integer.MAX_VALUE; the EOF
+        // check compares by subtraction so this stays a controlled
+        // ParquetReadException instead of ByteBuffer.wrap's
+        // IndexOutOfBoundsException.
+        byte[] data = concat(DeltaBinaryPackedEncoder.encodeInts(new int[] { 1, Integer.MAX_VALUE }, 0, 2),
+                "abcdefghij".getBytes());
+        DeltaLengthByteArrayDecoder decoder = new DeltaLengthByteArrayDecoder(data, 0);
+        decoder.initialize(2);
+        ByteBuffer first = decoder.readValue();
+        assertThat(first.remaining()).isEqualTo(1);
+
+        Throwable thrown = catchThrowable(decoder::readValue);
+
+        assertThat(thrown).isInstanceOf(ParquetReadException.class)
+                .hasMessage("Unexpected EOF reading byte array: expected 2147483647, got 9");
     }
 
     @Test

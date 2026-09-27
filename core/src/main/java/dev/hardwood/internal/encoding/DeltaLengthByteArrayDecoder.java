@@ -81,7 +81,10 @@ public class DeltaLengthByteArrayDecoder implements ValueDecoder {
             return EMPTY_BUFFER.duplicate();
         }
 
-        if (pos + length > data.length) {
+        // `length` is non-negative here, so the subtraction cannot overflow;
+        // `pos + length` could, and a wrapped sum would let ByteBuffer.wrap
+        // surface a raw IndexOutOfBoundsException.
+        if (length > data.length - pos) {
             throw new ParquetReadException("Unexpected EOF reading byte array: expected " + length
                     + ", got " + (data.length - pos));
         }
