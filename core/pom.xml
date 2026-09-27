@@ -24,8 +24,8 @@
   <url>https://hardwood.dev/</url>
 
   <properties>
-    <!-- Kept outside the checkerframework profile: the checker-qual dependency
-         added for the index annotations must resolve with the profile inactive. -->
+    <!-- #1283 spike. Referenced only by the checkerframework profile below,
+         from both its provided checker-qual dependency and its processor paths. -->
     <checker-framework.version>4.2.3</checker-framework.version>
   </properties>
 

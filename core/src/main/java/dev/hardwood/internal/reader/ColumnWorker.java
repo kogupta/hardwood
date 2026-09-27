@@ -611,11 +611,12 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
 
     /// What a decoder threw, said as what it means.
     ///
-    /// A corrupt dictionary index reaches here as an
-    /// [ArrayIndexOutOfBoundsException] from `dict[i]`, an impossible RLE run
-    /// header as an [IllegalStateException], a length that will not fit as an
-    /// [ArithmeticException]. Every one of them is the file being wrong, and every
-    /// one of them reads to a user as a defect in this library. They become a
+    /// An impossible RLE run header reaches here as an [IllegalStateException],
+    /// a length that will not fit as an [ArithmeticException]. A corrupt
+    /// dictionary index or DELTA byte-array length is rejected earlier by the
+    /// decoder with a [ParquetReadException], which passes through unmodified.
+    /// Every one of these is the file being wrong, and every one of them reads
+    /// to a user as a defect in this library. They become a
     /// [ParquetReadException] keeping the original as its cause.
     ///
     /// Four things pass through. [Error] is neither the file's fault nor
