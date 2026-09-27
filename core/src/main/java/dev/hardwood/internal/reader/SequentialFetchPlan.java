@@ -588,7 +588,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                     continue;
                 }
 
-                int numValues = (int) getValueCount(header);
+                int numValues = getValueCount(header);
 
                 // When masks are inactive we don't need a record count for
                 // the page and `recordsInPageComputed` stays false. When
@@ -713,7 +713,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
             return combined;
         }
 
-        private long getValueCount(PageHeader header) {
+        private int getValueCount(PageHeader header) {
             return switch (header.type()) {
                 case DATA_PAGE -> header.dataPageHeader().numValues();
                 case DATA_PAGE_V2 -> header.dataPageHeaderV2().numValues();

@@ -188,6 +188,8 @@ public final class DictionaryParser {
         // add, which is the only actionable thing about it, and it is not the file
         // being wrong — so it must not be caught and re-typed as one.
         Decompressor decompressor = context.decompressorFactory().getDecompressor(codec);
+        // Read before decompressing, which consumes the buffer.
+        int compressedSize = compressedData.remaining();
         try {
             byte[] data = decompressor.decompress(compressedData, uncompressedSize);
             return Dictionary.parse(data, numValues, column.type(), column.typeLength());
@@ -201,7 +203,7 @@ public final class DictionaryParser {
             throw new ParquetReadException("Failed to parse dictionary (type=" + column.type()
                     + ", numValues=" + numValues
                     + ", uncompressedSize=" + uncompressedSize
-                    + ", compressedSize=" + compressedData.remaining()
+                    + ", compressedSize=" + compressedSize
                     + ", codec=" + codec + ")", e);
         }
     }

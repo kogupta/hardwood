@@ -167,6 +167,27 @@ class DictionaryParserTest {
         }
     }
 
+    /// A body too short for the values the header declares fails to decode. The message
+    /// reports the body's size as it was handed over, not what the decompressor left of it.
+    @Test
+    void aBodyTooShortForItsValuesReportsItsSize() throws Exception {
+        DictionaryPage page = firstDictionaryPage();
+        int declared = page.header().dictionaryPageHeader().numValues() + 1;
+        int bodySize = page.body().remaining();
+        PageHeader overclaiming = withDictionaryHeader(page.header(),
+                new DictionaryPageHeader(declared, page.header().dictionaryPageHeader().encoding()));
+
+        try (HardwoodContextImpl context = HardwoodContextImpl.create()) {
+            assertThatThrownBy(() -> DictionaryParser.parsePage(overclaiming, page.body(),
+                    page.columnSchema(), page.metaData(), context))
+                    .isInstanceOf(ParquetReadException.class)
+                    .hasMessage("Failed to parse dictionary (type=INT64, numValues=" + declared
+                            + ", uncompressedSize=" + page.header().uncompressedPageSize()
+                            + ", compressedSize=" + bodySize
+                            + ", codec=" + page.metaData().codec() + ")");
+        }
+    }
+
     private static PageHeader withType(PageHeader header, PageType type) {
         return new PageHeader(type, header.uncompressedPageSize(), header.compressedPageSize(),
                 header.dataPageHeader(), header.dataPageHeaderV2(), header.dictionaryPageHeader(), header.crc());
