@@ -9,6 +9,9 @@ package dev.hardwood.internal.reader;
 
 import dev.hardwood.internal.predicate.BoundsReadability;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
+import dev.hardwood.tools.columnindex.qual.FileOrdinal;
+import dev.hardwood.tools.columnindex.qual.IndexedBy;
+import dev.hardwood.tools.columnindex.qual.OriginalIndex;
 
 /// Where each leaf of the reference schema sits in one specific file.
 ///
@@ -26,6 +29,7 @@ import dev.hardwood.internal.predicate.ResolvedPredicate;
 /// an order this reader can read — a property of the file that wrote them.
 public final class FileColumnOrdinals {
 
+    @IndexedBy(OriginalIndex.class)
     private final int[] fileOrdinals;
     private final ResolvedPredicate filter;
     private final BoundsReadability boundsReadability;
@@ -70,8 +74,10 @@ public final class FileColumnOrdinals {
     ///
     /// @throws IllegalStateException if the file does not carry that leaf, which
     ///         means it was never validated as a projected column
-    public int fileOrdinal(int referenceOrdinal) {
-        int ordinal = fileOrdinals[referenceOrdinal];
+    public @FileOrdinal int fileOrdinal(@OriginalIndex int referenceOrdinal) {
+        // Past the -1 check below, an entry is this file's ordinal.
+        @SuppressWarnings("columnindex")
+        @FileOrdinal int ordinal = fileOrdinals[referenceOrdinal];
         if (ordinal < 0) {
             throw new IllegalStateException(
                     "Column " + referenceOrdinal + " of the reference schema is absent from this file");

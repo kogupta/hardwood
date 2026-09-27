@@ -50,6 +50,7 @@
 
   <modules>
     <module>error-prone-checks</module>
+    <module>tools/column-index-checker</module>
     <module>bom</module>
     <module>test-bom</module>
     <module>test-support</module>

@@ -23,6 +23,7 @@ import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
+import dev.hardwood.tools.columnindex.qual.FileOrdinal;
 
 /// Lazily reads and caches a row group's dictionary pages so predicate evaluation can use them to
 /// prove a value absent from a column chunk.
@@ -57,7 +58,7 @@ public final class RowGroupDictionaryFilterSource {
         this.pageEnds = new long[columnCount];
     }
 
-    public Dictionary forColumn(int columnIndex) throws IOException {
+    public Dictionary forColumn(@FileOrdinal int columnIndex) throws IOException {
         if (columnIndex < 0 || columnIndex >= dictionaries.length) {
             return null;
         }
@@ -71,13 +72,13 @@ public final class RowGroupDictionaryFilterSource {
 
     /// The column's dictionary if [#forColumn] has read it, or `null` without reading anything.
     /// A fetch plan takes it from here so a dictionary pruning has read is not read again.
-    public Dictionary loaded(int columnIndex) {
+    public Dictionary loaded(@FileOrdinal int columnIndex) {
         return columnIndex >= 0 && columnIndex < dictionaries.length ? dictionaries[columnIndex] : null;
     }
 
     /// Where the column's dictionary page ends if [#forColumn] has read it — the file offset the
     /// chunk's first data page starts at — or `0`.
-    public long loadedPageEnd(int columnIndex) {
+    public long loadedPageEnd(@FileOrdinal int columnIndex) {
         return columnIndex >= 0 && columnIndex < pageEnds.length ? pageEnds[columnIndex] : 0;
     }
 
@@ -113,7 +114,7 @@ public final class RowGroupDictionaryFilterSource {
         return hasDictionaryPage && hasDataPage;
     }
 
-    private Dictionary readDictionary(int columnIndex) throws IOException {
+    private Dictionary readDictionary(@FileOrdinal int columnIndex) throws IOException {
         ColumnChunk columnChunk = rowGroup.columns().get(columnIndex);
         ColumnMetaData metaData = columnChunk.metaData();
 

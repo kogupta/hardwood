@@ -15,6 +15,7 @@ import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.RowGroup;
+import dev.hardwood.tools.columnindex.qual.FileOrdinal;
 
 /// Index buffers for all columns in a single row group.
 ///
@@ -31,7 +32,7 @@ public class RowGroupIndexBuffers {
 
     /// Returns the index buffers for the given original column index, or `null`
     /// if no indexes were fetched for that column.
-    public ColumnIndexBuffers forColumn(int columnIndex) {
+    public ColumnIndexBuffers forColumn(@FileOrdinal int columnIndex) {
         return (columnIndex < columns.length) ? columns[columnIndex] : null;
     }
 

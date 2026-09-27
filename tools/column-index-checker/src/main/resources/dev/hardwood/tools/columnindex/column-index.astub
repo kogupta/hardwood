@@ -1,0 +1,9 @@
+import dev.hardwood.tools.columnindex.qual.FileOrdinal;
+import dev.hardwood.tools.columnindex.qual.IndexedBy;
+
+package dev.hardwood.metadata;
+
+public record RowGroup(List<ColumnChunk> columns, long totalByteSize, long numRows) {
+    @IndexedBy(FileOrdinal.class)
+    public List<ColumnChunk> columns();
+}

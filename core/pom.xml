@@ -70,6 +70,16 @@
       <scope>provided</scope>
     </dependency>
 
+    <!-- Column-index qualifiers (`@OriginalIndex`, `@ProjectedIndex`, `@FileOrdinal`,
+         `@IndexedBy`) and the checker that enforces them under -Pcolumn-index-check. The
+         qualifiers have no role at run time. -->
+    <dependency>
+      <groupId>dev.hardwood</groupId>
+      <artifactId>hardwood-column-index-checker</artifactId>
+      <version>${project.version}</version>
+      <scope>provided</scope>
+    </dependency>
+
     <!-- Test dependencies -->
     <dependency>
       <groupId>org.junit.jupiter</groupId>
@@ -235,9 +245,24 @@
       <build>
         <!-- Classes compiled without the checker count as up to date to the compiler plugin,
              which would then skip the checked compilation. A directory of its own keeps a
-             plain build from ever standing in for a checked one. -->
+             plain build from standing in for a checked one, and emptying it first keeps an
+             earlier checked build, of a different class set or checker version, from doing
+             the same. -->
         <directory>${project.basedir}/target/index-check</directory>
         <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-clean-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>index-check-clean</id>
+                <phase>initialize</phase>
+                <goals>
+                  <goal>clean</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
           <plugin>
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-compiler-plugin</artifactId>
@@ -255,6 +280,63 @@
                       <groupId>org.checkerframework</groupId>
                       <artifactId>checker</artifactId>
                       <version>${checker-framework.version}</version>
+                    </path>
+                  </annotationProcessorPaths>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+    <!-- Column-index spaces: -Pcolumn-index-check runs the Hardwood checker from
+         tools/column-index-checker on the classes matched by `column-index-check.classes`.
+         Every class in that set compiles with zero errors; see _designs/INDEX_CHECKER.md. -->
+    <profile>
+      <id>column-index-check</id>
+      <properties>
+        <column-index-check.classes>^dev\.hardwood\.internal\.(reader\.(FileColumnOrdinals|RowGroupIterator|RowGroupIndexBuffers)|predicate\.(BoundsReadability|dictionary\.RowGroupDictionaryFilterSource)|schema\.ProjectedSchema)(\..*)?$</column-index-check.classes>
+      </properties>
+      <build>
+        <!-- A directory of its own, emptied first, for the same reason as -Pindex-check. -->
+        <directory>${project.basedir}/target/column-index-check</directory>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-clean-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>column-index-check-clean</id>
+                <phase>initialize</phase>
+                <goals>
+                  <goal>clean</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-compiler-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>default-compile</id>
+                <configuration>
+                  <compilerArgs combine.children="append">
+                    <arg>-processor</arg>
+                    <arg>dev.hardwood.tools.columnindex.ColumnIndexChecker</arg>
+                    <arg>-AonlyDefs=${column-index-check.classes}</arg>
+                    <arg>-AmergeStubsWithSource</arg>
+                  </compilerArgs>
+                  <annotationProcessorPaths combine.children="append">
+                    <path>
+                      <groupId>org.checkerframework</groupId>
+                      <artifactId>checker</artifactId>
+                      <version>${checker-framework.version}</version>
+                    </path>
+                    <path>
+                      <groupId>dev.hardwood</groupId>
+                      <artifactId>hardwood-column-index-checker</artifactId>
+                      <version>${project.version}</version>
                     </path>
                   </annotationProcessorPaths>
                 </configuration>

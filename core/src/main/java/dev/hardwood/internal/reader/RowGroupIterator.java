@@ -58,6 +58,10 @@ import dev.hardwood.reader.SchemaIncompatibleException;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
+import dev.hardwood.tools.columnindex.qual.FileOrdinal;
+import dev.hardwood.tools.columnindex.qual.IndexedBy;
+import dev.hardwood.tools.columnindex.qual.OriginalIndex;
+import dev.hardwood.tools.columnindex.qual.ProjectedIndex;
 
 /// Shared iterator over `(InputFile, RowGroup)` pairs across one or more files.
 ///
@@ -100,6 +104,7 @@ public class RowGroupIterator implements Closeable {
     private long firstRowGroupSkip;
 
     // Set after first file
+    @IndexedBy(OriginalIndex.class)
     private FileSchema referenceSchema;
     private ProjectedSchema projectedSchema;
     private ResolvedPredicate filterPredicate;
@@ -155,7 +160,7 @@ public class RowGroupIterator implements Closeable {
     public record WorkItem(
             InputFile inputFile,
             RowGroup rowGroup,
-            FileSchema fileSchema,
+            @IndexedBy(FileOrdinal.class) FileSchema fileSchema,
             FileColumnOrdinals columnOrdinals,
             int fileIndex,
             int rowGroupIndex,
@@ -742,6 +747,7 @@ public class RowGroupIterator implements Closeable {
         // perRgMaxRows returns 0 and the matched-row cap is enforced at the reader.
         long perRgMaxRows = perRgMaxRows(workItem);
 
+        @IndexedBy(ProjectedIndex.class)
         FetchPlan[] plans = new FetchPlan[projectedCount];
 
         for (int projCol = 0; projCol < projectedCount; projCol++) {
@@ -1117,7 +1123,7 @@ public class RowGroupIterator implements Closeable {
     /// column has an OffsetIndex (parquet-mr default since 1.11) pay no I/O
     /// here.
     public static boolean masksApplicableForRowGroup(ProjectedSchema projectedSchema,
-                                                      RowGroup rowGroup, FileSchema fileSchema,
+                                                      RowGroup rowGroup, @IndexedBy(FileOrdinal.class) FileSchema fileSchema,
                                                       FileColumnOrdinals columnOrdinals,
                                                       InputFile inputFile) throws IOException {
         int projectedCount = projectedSchema.getProjectedColumnCount();
@@ -1422,13 +1428,13 @@ public class RowGroupIterator implements Closeable {
     }
 
     /// Resolves the file-level side of the chunk-path cross-check for one file.
-    private ChunkPathCheck chunkPathCheck(FileSchema fileSchema, FileColumnOrdinals columnOrdinals) {
+    private ChunkPathCheck chunkPathCheck(@IndexedBy(FileOrdinal.class) FileSchema fileSchema, FileColumnOrdinals columnOrdinals) {
         int touchedCount = touchedColumns.cardinality();
         int[] fileOrdinals = new int[touchedCount];
         FieldPath[] schemaPaths = new FieldPath[touchedCount];
         int touched = 0;
-        for (int refOrdinal = touchedColumns.nextSetBit(0); refOrdinal >= 0;
-                refOrdinal = touchedColumns.nextSetBit(refOrdinal + 1)) {
+        for (int refOrdinal = nextTouched(0); refOrdinal >= 0;
+                refOrdinal = nextTouched(refOrdinal + 1)) {
             int fileOrdinal = columnOrdinals.fileOrdinal(refOrdinal);
             fileOrdinals[touched] = fileOrdinal;
             schemaPaths[touched] = fileSchema.getColumn(fileOrdinal).fieldPath();
@@ -1507,10 +1513,17 @@ public class RowGroupIterator implements Closeable {
     ///         the schema the file declares for it
     private void validateReferenceColumns() {
         String fileName = inputFiles.get(0).name();
-        for (int originalIndex = touchedColumns.nextSetBit(0); originalIndex >= 0;
-                originalIndex = touchedColumns.nextSetBit(originalIndex + 1)) {
+        for (int originalIndex = nextTouched(0); originalIndex >= 0;
+                originalIndex = nextTouched(originalIndex + 1)) {
             FixedWidthValidator.validate(fileName, referenceSchema.getColumn(originalIndex));
         }
+    }
+
+    /// The first reference leaf ordinal in [#touchedColumns] at or after `from`, or `-1`.
+    // A BitSet hands its bits back as plain ints; this one holds reference leaf ordinals only.
+    @SuppressWarnings("columnindex")
+    private @OriginalIndex int nextTouched(int from) {
+        return touchedColumns.nextSetBit(from);
     }
 
     /// The reference leaf ordinals a read with this projection and filter touches.
@@ -1535,13 +1548,13 @@ public class RowGroupIterator implements Closeable {
     /// @return this file's leaf ordinal per reference leaf ordinal, `-1` where unresolved
     /// @throws SchemaIncompatibleException if a touched column is missing or its leaf
     ///         differs in a way that changes how its pages decode
-    private int[] validateSchemaCompatibility(InputFile inputFile, FileSchema fileSchema) {
+    private int[] validateSchemaCompatibility(InputFile inputFile, @IndexedBy(FileOrdinal.class) FileSchema fileSchema) {
         int referenceColumnCount = referenceSchema.getColumnCount();
         int[] fileOrdinals = new int[referenceColumnCount];
         Arrays.fill(fileOrdinals, -1);
 
-        for (int originalIndex = touchedColumns.nextSetBit(0); originalIndex >= 0;
-                originalIndex = touchedColumns.nextSetBit(originalIndex + 1)) {
+        for (int originalIndex = nextTouched(0); originalIndex >= 0;
+                originalIndex = nextTouched(originalIndex + 1)) {
             fileOrdinals[originalIndex] = validateColumn(inputFile, fileSchema, originalIndex);
         }
         return fileOrdinals;
@@ -1551,7 +1564,7 @@ public class RowGroupIterator implements Closeable {
     /// resolved by field path.
     ///
     /// @return the column's leaf ordinal in `fileSchema`
-    private int validateColumn(InputFile inputFile, FileSchema fileSchema, int originalIndex) {
+    private int validateColumn(InputFile inputFile, @IndexedBy(FileOrdinal.class) FileSchema fileSchema, @OriginalIndex int originalIndex) {
         ColumnSchema refColumn = referenceSchema.getColumn(originalIndex);
 
         ColumnSchema fileColumn;

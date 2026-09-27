@@ -17,6 +17,7 @@ import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.SchemaElement;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
+import dev.hardwood.tools.columnindex.qual.FileOrdinal;
 
 /// Whether a column's recorded `min` / `max` are in an order this reader can read.
 ///
@@ -46,7 +47,7 @@ public interface BoundsReadability {
     BoundsReadability ALL = columnIndex -> true;
 
     /// Whether the leaf column at `columnIndex` has bounds worth reading.
-    boolean readable(int columnIndex);
+    boolean readable(@FileOrdinal int columnIndex);
 
     /// The readability of every leaf of one file, indexed by that file's own leaf ordinals.
     /// Readability is a property of the file that wrote the bounds, so each file of a

@@ -9,7 +9,8 @@ Design: [_designs/INDEX_CHECKER.md](_designs/INDEX_CHECKER.md).
 
 ## Tooling (verified)
 
-- The profile compiles into `target/index-check`. Sharing `target/classes` let a plain build mark the classes up to date, and `-Pindex-check` then reported "Nothing to compile" and checked nothing. Every result recorded before this fix followed a source edit, so the checker did run for them.
+- The profile compiles into `target/index-check` and empties it in `initialize`. Sharing `target/classes` let a plain build mark the classes up to date, and `-Pindex-check` then reported "Nothing to compile" and checked nothing. A separate directory alone was not enough: a second checked run, or one with a different `-Dindex-check.classes`, also printed "Nothing to compile". With the clean step, two runs in a row both print `Compiling 405 source files`.
+- Error Prone runs in the same `javac` call only without `-Dquick` (the `qa` profile). Only `default-compile` gets the checker: `src/main/java22` and test sources are never checked.
 
 - Checker Framework 4.2.3 (`checker`, `checker-qual`) from Maven Central.
 - Runs on JDK 21 and JDK 25 `javac` (container JDK 25: Ubuntu `openjdk-25-jdk-headless` 25.0.4.1).
@@ -36,7 +37,7 @@ Baseline build on JDK 25: `./mvnw -pl core -am install -DskipITs` passes in 63 s
 
 ## Scratch spikes (not in the tree)
 
-- **Dictionary `numValues`.** `@NonNegative` on `ThriftCompactReader.readNonNegativeI32()`, `DictionaryPageHeader.numValues`, `DictionaryParser.decompress` and `Dictionary.parse` clears the "array size could be negative" errors in `Dictionary.parse`. The re-check at `DictionaryParser.java:150` becomes dead.
+- **Dictionary `numValues`.** `@NonNegative` on `ThriftCompactReader.readNonNegativeI32()`, `DictionaryPageHeader.numValues`, `DictionaryParser.decompress` and `Dictionary.parse` clears the "array size could be negative" errors in `Dictionary.parse`. The re-check at `DictionaryParser.java:150` was already dead since `d116cc32` (#604), which introduced `readNonNegativeI32()` for `num_values`; the checker documents that fact.
 - **`PqIntListImpl`.** 17 errors to 0 with a `final int[]` field under `@HasSubsequence`, `@LengthOf("this")` on `size()`, and the bounds check inlined in `get`. Cost: one constructor suppression (it hides 7 errors: the 4 start/end facts, stated against local names, and the `valueArrays[projectedCol]` lookup) and one range check per list.
 
 ## Classification of internal bound checks
@@ -56,46 +57,64 @@ Baseline build on JDK 25: `./mvnw -pl core -am install -DskipITs` passes in 63 s
 Each item: annotate the path from the boundary, delete the re-check, run the checker, run the tests.
 
 - [x] `DictionaryParser.java:150` `numValues < 0`. Boundary: `ThriftCompactReader.readNonNegativeI32()` via `DictionaryPageHeaderReader:40`.
-  - `@NonNegative` on `readNonNegativeI32()`, the `DictionaryPageHeaderReader` local, the `DictionaryPageHeader.numValues` component, `DictionaryParser.decompress` and `Dictionary.parse`.
+  - `@NonNegative` on `readNonNegativeI32()`, the `DictionaryPageHeader.numValues` component, `DictionaryParser.decompress` and `Dictionary.parse`.
   - Re-check and `DictionaryParserTest.rejectsANegativeValueCount` deleted. The rejection is now pinned where it happens: `MalformedMetadataValidationTest.negativeDictionaryNumValuesRejected` asserts `DictionaryPageHeader.num_values — must be non-negative but was -1`. `BadDataHandlingTest.rejectDictheader` / `rejectArrowGH41321` still pass.
   - Canary: dropping `@NonNegative` from the record component fails the build at `DictionaryParser.java:157` (`[argument] found: int, required: @NonNegative int`).
   - Checked set: `DictionaryPageHeader`, `DictionaryPageHeaderReader`, `DictionaryParser` (0 errors). `ThriftCompactReader` and `Dictionary` carry annotations but are not in the set yet; their signatures are still checked at every call from a checked class.
-- [x] `RowGroupIterator.java:249, 252, 519` `tailSkip`/`physicalSkip < 0`. Boundary: `RowReaderBuilder.skip(long)` and `tail(long)` in `ParquetFileReader`; `setTailSkip` is only called under `skip > 0`. Test constructors pass `0`.
-  - `@NonNegative long` on the builder's `skip` field, `buildRowReader(…, skip)`, the two private `buildRowReader` overloads, `trackedIterator`, the `RowGroupIterator` constructors, its two fields and `setTailSkip`. Three re-checks deleted; the `tailSkip`/`physicalSkip` mutual-exclusion check stays (not an index fact). No test exercised the deleted checks.
-  - The annotations add 0 errors. `ParquetFileReader` joins the checked set; its one error was a Value Checker false positive on the `switch` in `matches` (`found @BoolVal(false), required @BoolVal(true)`), suppressed with `@SuppressWarnings("value")` and a comment.
-  - Canaries: deleting the public `if (skip < 0) throw` in `skip(long)` fails the build (`[assignment] found: long, required: @NonNegative long`), so the boundary check is now load-bearing for compilation. Dropping `@NonNegative` from the field fails at the `buildRowReader` call.
-  - `RowGroupIterator` stays out of the checked set. Sound anyway: its parameter annotations are enforced at every call from a checked class, and `ParquetFileReader` is the only production caller. Its 15 errors are projected-column indexing (`plans[projectedColumnIndex]`, `touched.set(toOriginalIndex(…))`, arrays sized by `getProjectedColumnCount()` / `getColumnCount()`, `nextSetBit` indexes into `fileOrdinals`). Clearing them pulls in `ProjectedSchema` (15 errors) and the public `FileSchema` (4): the index-space work below, not this item.
+- [x] `RowGroupIterator` `tailSkip`/`physicalSkip < 0`. Boundary: `RowReaderBuilder.skip(long)` and `tail(long)` in `ParquetFileReader`; `setTailSkip` is only called under `skip > 0`.
+  - `@NonNegative long` on the builder's `skip` field, `buildRowReader(…, skip)`, the two private `buildRowReader` overloads, `trackedIterator`, the `RowGroupIterator` constructors, its two fields and `setTailSkip`.
+  - The three `RowGroupIterator` checks stay. `RowGroupIterator` is outside the checked set, so its annotations bind only callers inside the set: removing `@NonNegative` from its field and `setTailSkip` still compiles. A negative value from an unchecked caller would be read silently (`tailSkip < 0` is ignored; `physicalSkip < 0` returns N fewer rows). `RowGroupIteratorSkipTest` pins the three messages.
+  - What the annotations do prove: deleting the public `if (skip < 0) throw` in `skip(long)` fails the build (`[assignment] found: long, required: @NonNegative long`), so the builder's check is load-bearing for compilation. `ParquetReaderTest.skipRejectsNegative` and `tailRejectsNonPositive` pin its messages.
+  - `ParquetFileReader` joins the checked set. Its one error was a Value Checker false positive on the `switch` in `matches` (`[switch.expression] found @BoolVal(false), required @BoolVal(true)`). Moving the `And` loop into `matchesAll` removes it with no suppression.
 - [x] Trace remaining candidates. None converted; each stays for the reason given.
 
   | Check | Outcome | Reason |
   |---|---|---|
-  | `BatchSizing:100` `availableRows < 0` | Stays | Derived from `RowGroup.numRows`, a component of a public record any caller can construct. The public record is the boundary. |
+  | `BatchSizing:100` `availableRows < 0` | Stays | `availableRows` carries the `ROWS_UNKNOWN = -1` sentinel, so the parameter cannot be `@NonNegative`. Proving the other values would also put `@NonNegative` on the public record component `RowGroup.numRows`. |
   | `PageInfo:74` `numValues <= 0` | Stays | A page header may declare `num_values = 0`; the check guards file bytes. |
   | `ByteArrayBuilder:35` capacity `< 0` | Stays (cost) | Provable: callers pass `32` or a clamp to `[512, 65536]`. Enforcing it needs `ColumnChunkBuffer` (22 errors) in the checked set. |
   | `ByteArrayBuilder:91` `reserve` length `< 0` | Stays | Lengths are products (`Math.multiplyExact`), which the checker does not bound. |
   | `MergePlan:32` `projectedIndex < 0` | Stays | One caller takes the index from an `Integer` map key, which carries no facts. A projected-index fact: see index spaces. |
-  | `BoundsReadability:93` | Stays | The index arrives through a JDK functional interface, whose parameter cannot carry a qualifier. |
+  | `BoundsReadability:93` | Stays | `BoundsReadability` is Hardwood's own functional interface, so its parameter can carry a qualifier (it now takes `@FileOrdinal`). The upper half, `columnIndex >= readable.length`, relates the index to an array captured in a lambda, which no qualifier can name. |
   | `RowRanges:46` | Stays | Only `start >= 0` is provable; `start < end` relates a skip to a row count. |
   | `SequentialFetchPlan:152` | Stays | Positive only when the mask is non-trivial; a conditional fact has no qualifier. |
   | `ResolvedPredicate:307` | Stays | `definitionLevel <= leafDefinitionLevel` is a schema-tree fact read from public `SchemaNode`s. |
   | `RleBitPackingHybridEncoder:56` bit width | Stays (cost) | Provable as `@IntRange(from = 0, to = 32)` from `LevelEncoder.bitWidth` (`32 - numberOfLeadingZeros`). Enforcing it needs `ColumnChunkBuffer` (22), `RleBitPackingHybridEncoder` (10) and `LevelEncoder` (2) clean. |
   | `BitPacker:31` bit width | Stays (cost) | Same as above plus `DeltaBinaryPackedEncoder` (23). The divisibility half is not an index fact. |
-  | `FileMetadataCache:140` | Stays | "Not found" branch, not validation. |
+  | `FileMetadataCache:140` | Stays | For required loads, `Objects.checkIndex` is the only range check behind the public `ParquetFileReader.getFileMetaData(int)`: a public-API boundary check in internal code. |
 
   The costly ones fail on mutable buffer cursors: a growable `byte[]` with a `length` field, and a counter that reaches the array length for one statement before resetting. The checker cannot state "below the length at method entry", so these need suppressions, around 34 of them to delete one three-line check.
-- [ ] Classes on the paths above not yet in the checked set: `ThriftCompactReader` (12 errors), `Dictionary` (17), `RowGroupIterator` (15), `BatchSizing` (1). In the set: `DictionaryPageHeader`, `DictionaryPageHeaderReader`, `DictionaryParser`, `ParquetFileReader`.
+- [ ] Classes on the paths above not yet in the checked set: `ThriftCompactReader` (10 errors), `Dictionary` (12), `RowGroupIterator` (15), `BatchSizing` (1). In the set: `DictionaryPageHeader`, `DictionaryPageHeaderReader`, `DictionaryParser`, `ParquetFileReader`.
 - [x] `index-check` profile in `core/pom.xml`; `checker-framework.version` in the parent POM; `checker-qual` as `provided`. Run: `./mvnw -pl core -am -Pindex-check install -DskipITs` (52 s with Error Prone and unit tests, vs 63 s baseline run earlier; within noise). `.mvn/jvm.config` flags suffice; nothing extra needed for Maven.
 - [ ] Full `./mvnw verify` on JDK 25 before pushing. numValues change: all modules pass except the Docker-based S3 ITs (`Could not find a valid Docker environment`; no Docker in this container). `-rf :hardwood-s3 -DskipITs` passes; core unit tests 13,890 run, 0 failures. Keep open: the S3 ITs have not run.
   Skip change: same result. Unit tests pass in every module; every failing IT is a Docker-bound S3 test (`hardwood-s3`, the `*S3CommandIT` classes in `cli`, `ParquetReaderS3CompatIT`).
 
-## Next: index spaces
+## Pre-existing bugs found while tracing
 
-Findings so far (history read, no spike yet):
+- [x] `DictionaryParser.decompress` reported `compressedSize=0` in its failure message: it read `compressedData.remaining()` after the decompressor had consumed the buffer. The size is now read first. `DictionaryParserTest.aBodyTooShortForItsValuesReportsItsSize` failed before the fix.
+- [x] `SequentialFetchPlan`: `(int) getValueCount(header)` narrowed a `long` that only ever held an `int`. `getValueCount` now returns `int`.
+- [ ] `PageInfo.nullPlaceholder` throws `IllegalArgumentException` for a value from file bytes (a data page with `num_values = 0`, inline stats and drop-by-stats), where a `ParquetReadException` naming the file is expected. Not changed: needs a fixture with such a page.
 
-- `0625f55b` (#525) is a guard test, not a shipped bug: it pins the field-index vs leaf-column-index case before a refactor could break it.
-- `6cff8f99` (#1242) fixed a real bug: a predicate on an unprojected column had no projected index and threw at row-level evaluation. Missing mapping, not an int passed across spaces.
-- No other instance found in commit messages.
-- Plan: qualifiers `@ProjectedIndex`, `@OriginalIndex`, `@FieldIndex`, `@LeafIndex` on plain `int`, first on `ProjectedSchema.toOriginalIndex` / `toProjectedIndex`.
-- Unknowns to settle in the spike: array subscripts are not checked by the Subtyping Checker, so raw `array[idx]` mix-ups slip through; the qualifier of `idx + 1` and of loop counters; the `-1` "not projected" sentinel needs its own qualifier. Measure annotations and casts needed in `ProjectedSchema` plus one consumer (`TopLevelFieldMap` or `FlatRowReader`).
+## Index spaces
 
-- [ ] Subtyping Checker qualifiers for original vs projected column index, field index vs leaf-column index. Evidence: `0625f55b` (#525) "confusing the two spaces there returns wrong rows (or throws) without any other signal"; #1242. Surface: `toOriginalIndex` 14 refs, `toProjectedIndex` 15, `projectedCol` 127, `projectedIndex` 89, `originalIndex` 32, `fieldIndex` 168.
+Design: [_designs/INDEX_CHECKER.md, Index spaces](_designs/INDEX_CHECKER.md#index-spaces). Run: `./mvnw -pl core -Pcolumn-index-check -Dquick compile`.
+
+- [x] Bug class confirmed. `e28d8a2d` (#903) fixed a cross-space mix-up that shipped: the multi-file reader used reference-schema ordinals as file ordinals in `rowGroup.columns().get(…)`, `fileSchema().getColumn(…)` and `indexBuffers().forColumn(…)`, and decoded one column's pages into another column's slot when a later file ordered its columns differently. `0625f55b` (#525) is a guard test for field index vs leaf-column index. `6cff8f99` (#1242) is a missing mapping that threw, not a mix-up.
+- [x] Custom checker, `tools/column-index-checker` (module `hardwood-column-index-checker`). The stock Subtyping Checker checks arguments, assignments and returns, but not subscripts, and the space of `FileSchema.getColumn(int)` depends on which schema instance it is called on. The checker adds `@IndexedBy(X.class)` on the variable, field, parameter or method that holds an array, list or schema, and checks `array[i]`, `list.get(i)` and `schema.getColumn(i)` against it. Qualifiers: `@OriginalIndex`, `@ProjectedIndex`, `@ProjectedIndexOrAbsent`, `@FileOrdinal`, top `@ColumnIndexUnknown`, bottom `@ColumnIndexBottom`.
+- [x] Literals are bottom (`@QualifierForLiterals`). With literals at top, `i++` on a `@ProjectedIndex` counter failed with `[unary.increment]` and every cast gave `[cast.unsafe]`. Cost: a counter starting at `0`, or the literal `-1`, fits every space. `ColumnIndexCheckerTest.literalFitsEverySpace` pins the gap.
+- [x] Checked set, 0 errors: `ProjectedSchema`, `FileColumnOrdinals`, `RowGroupIterator`, `RowGroupIndexBuffers`, `BoundsReadability`, `RowGroupDictionaryFilterSource`.
+- [x] Conversion points (`@SuppressWarnings("columnindex")` with a comment), 6 in total:
+  - `ProjectedSchema`: `originalIndex(ColumnSchema)` and `originalIndex(PrimitiveNode)`, where a reference-schema leaf's `columnIndex()` becomes an `@OriginalIndex`; one `Integer` unboxing; one `IntPredicate` in `createAugmented`.
+  - `FileColumnOrdinals.fileOrdinal`: the array entry past the `-1` check.
+  - `RowGroupIterator.nextTouched`: `BitSet.nextSetBit` returns a plain `int`.
+- [x] Stub limits. `-AmergeStubsWithSource` applies stub annotations to classes compiled from source, and a stub on the top-level record `RowGroup` works. A stub on the nested record `SchemaNode.PrimitiveNode` did not apply in CF 4.2.3 (cause not found), hence the `originalIndex(…)` conversion points.
+- [x] #903 canary. Putting the pre-fix lines back at `RowGroupIterator:745-747` fails `-Pcolumn-index-check` with three errors:
+  - `[subscript.space] … for rowGroup.columns(). found: @OriginalIndex, required: @FileOrdinal`
+  - `[subscript.space] … for workItem.fileSchema(). found: @OriginalIndex, required: @FileOrdinal`
+  - `[argument] incompatible argument for parameter columnIndex of RowGroupIndexBuffers.forColumn. found: @OriginalIndex int, required: @FileOrdinal int`
+
+  In the scratch run with the second site (`:1121`, `:1125`) reverted as well, it reported 6 errors, including a local named `fileOrdinal` that held an original index.
+- [x] `ColumnIndexCheckerTest` compiles small sources in-process and pins the full messages: a mapped ordinal picks a chunk (clean), a reference ordinal picks a chunk of another file, a projected index subscripts an original-indexed array, a projected index is passed as an original one, and the literal gap.
+- [x] Maven wiring: the `column-index-check` profile of `core`. The checker module holds the qualifiers too, because the Checker Framework loads qualifier classes from the processor path; core depends on it with `provided` scope. `./mvnw verify -DskipITs` passes in every module, with no "Cannot find annotation method" warning downstream.
+- [ ] Not in the set yet: `FlatRowReader`, `NestedRowReader`, `TopLevelFieldMap`, `ShredLevel`, `SelectionEngine`, `ColumnReaders`. Blockers: `projectedSchema::toProjectedIndex` passed as an `IntUnaryOperator` (`BatchFilterCompiler`, `RecordFilterCompiler`, `SelectionEngine:111`) needs a Hardwood functional interface or a conversion point; `FlatRowReader.getFieldName(int)` is a public-API boundary that needs a conversion point.
+- [ ] Field index vs leaf-column index (#525) has no qualifier yet.

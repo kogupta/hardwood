@@ -19,6 +19,9 @@ import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
+import dev.hardwood.tools.columnindex.qual.OriginalIndex;
+import dev.hardwood.tools.columnindex.qual.ProjectedIndex;
+import dev.hardwood.tools.columnindex.qual.ProjectedIndexOrAbsent;
 
 /// Represents a projected view of a Parquet schema containing only selected columns.
 ///
@@ -32,8 +35,8 @@ import dev.hardwood.schema.SchemaNode;
 public final class ProjectedSchema {
 
     private final FileSchema originalSchema;
-    private final int[] projectedToOriginal;   // projected index -> original index
-    private final int[] originalToProjected;   // original index -> projected index (-1 if not projected)
+    private final @OriginalIndex int[] projectedToOriginal;   // projected index -> original index
+    private final @ProjectedIndexOrAbsent int[] originalToProjected;   // original index -> projected index (-1 if not projected)
     private final List<ColumnSchema> projectedColumns;
     private final int[] projectedFieldIndices; // indices of projected top-level fields in root children
     /// How many leading projected columns a reader exposes. Equal to the projected column
@@ -44,15 +47,15 @@ public final class ProjectedSchema {
     /// counterpart of [#exposedColumnCount].
     private final int exposedFieldCount;
 
-    private ProjectedSchema(FileSchema originalSchema, int[] projectedToOriginal,
-                            int[] originalToProjected, List<ColumnSchema> projectedColumns,
+    private ProjectedSchema(FileSchema originalSchema, @OriginalIndex int[] projectedToOriginal,
+                            @ProjectedIndexOrAbsent int[] originalToProjected, List<ColumnSchema> projectedColumns,
                             int[] projectedFieldIndices) {
         this(originalSchema, projectedToOriginal, originalToProjected, projectedColumns, projectedFieldIndices,
                 projectedToOriginal.length, projectedFieldIndices.length);
     }
 
-    private ProjectedSchema(FileSchema originalSchema, int[] projectedToOriginal,
-                            int[] originalToProjected, List<ColumnSchema> projectedColumns,
+    private ProjectedSchema(FileSchema originalSchema, @OriginalIndex int[] projectedToOriginal,
+                            @ProjectedIndexOrAbsent int[] originalToProjected, List<ColumnSchema> projectedColumns,
                             int[] projectedFieldIndices, int exposedColumnCount, int exposedFieldCount) {
         this.originalSchema = originalSchema;
         this.projectedToOriginal = projectedToOriginal;
@@ -97,9 +100,9 @@ public final class ProjectedSchema {
         int originalCount = originalColumns.size();
 
         // Build lists of which columns to include
-        List<Integer> includedOriginalIndices = new ArrayList<>();
+        List<@OriginalIndex Integer> includedOriginalIndices = new ArrayList<>();
         List<Integer> includedFieldIndices = new ArrayList<>();
-        int[] originalToProjected = new int[originalCount];
+        @ProjectedIndexOrAbsent int[] originalToProjected = new int[originalCount];
         Arrays.fill(originalToProjected, -1);
 
         // Process each requested column name
@@ -138,11 +141,13 @@ public final class ProjectedSchema {
 
         // Build projected arrays
         int projectedCount = includedOriginalIndices.size();
-        int[] projectedToOriginal = new int[projectedCount];
+        @OriginalIndex int[] projectedToOriginal = new int[projectedCount];
         List<ColumnSchema> projectedColumns = new ArrayList<>(projectedCount);
 
         for (int i = 0; i < projectedCount; i++) {
-            int origIdx = includedOriginalIndices.get(i);
+            // Unboxing drops the element's qualifier.
+            @SuppressWarnings("columnindex")
+            @OriginalIndex int origIdx = includedOriginalIndices.get(i);
             projectedToOriginal[i] = origIdx;
             originalToProjected[origIdx] = i;
             projectedColumns.add(originalColumns.get(origIdx));
@@ -185,12 +190,14 @@ public final class ProjectedSchema {
 
         // Both index spaces are partitioned so the exposed entries keep their order and their
         // indices, and the predicate-only ones follow.
-        int[] projectedToOriginal = partition(augmented.projectedToOriginal,
+        // IntPredicate's parameter carries no qualifier.
+        @SuppressWarnings("columnindex")
+        @OriginalIndex int[] projectedToOriginal = partition(augmented.projectedToOriginal,
                 original -> exposed.toProjectedIndex(original) >= 0);
         int[] fieldIndices = partition(augmented.projectedFieldIndices,
                 field -> contains(exposed.projectedFieldIndices, field));
 
-        int[] originalToProjected = new int[schema.getColumnCount()];
+        @ProjectedIndexOrAbsent int[] originalToProjected = new int[schema.getColumnCount()];
         Arrays.fill(originalToProjected, -1);
         List<ColumnSchema> projectedColumns = new ArrayList<>(projectedToOriginal.length);
         for (int i = 0; i < projectedToOriginal.length; i++) {
@@ -231,8 +238,8 @@ public final class ProjectedSchema {
     /// Creates a projection that includes all columns.
     private static ProjectedSchema createAllColumnsProjection(FileSchema schema) {
         int columnCount = schema.getColumnCount();
-        int[] projectedToOriginal = new int[columnCount];
-        int[] originalToProjected = new int[columnCount];
+        @OriginalIndex int[] projectedToOriginal = new int[columnCount];
+        @ProjectedIndexOrAbsent int[] originalToProjected = new int[columnCount];
         for (int i = 0; i < columnCount; i++) {
             projectedToOriginal[i] = i;
             originalToProjected[i] = i;
@@ -250,7 +257,7 @@ public final class ProjectedSchema {
 
     /// Resolves a simple column name (no dot notation).
     private static void resolveSimpleColumn(FileSchema schema, String name,
-                                            List<Integer> includedOriginalIndices,
+                                            List<@OriginalIndex Integer> includedOriginalIndices,
                                             List<Integer> includedFieldIndices,
                                             int[] originalToProjected) {
         // First check if it's a direct column name. The match is on leaf name
@@ -261,7 +268,7 @@ public final class ProjectedSchema {
         // itself; for a nested match it's the containing top-level group.
         for (ColumnSchema col : schema.getColumns()) {
             if (col.name().equals(name) && originalToProjected[col.columnIndex()] < 0) {
-                includedOriginalIndices.add(col.columnIndex());
+                includedOriginalIndices.add(originalIndex(col));
                 String topLevel = col.fieldPath().topLevelName();
                 List<SchemaNode> children = schema.getRootNode().children();
                 for (int i = 0; i < children.size(); i++) {
@@ -290,7 +297,7 @@ public final class ProjectedSchema {
 
     /// Resolves a nested column name (dot notation).
     private static void resolveNestedColumn(FileSchema schema, String name,
-                                            List<Integer> includedOriginalIndices,
+                                            List<@OriginalIndex Integer> includedOriginalIndices,
                                             List<Integer> includedFieldIndices,
                                             int[] originalToProjected) {
         SchemaPathResolver.Resolution resolution = SchemaPathResolver.resolve(schema, name);
@@ -309,12 +316,12 @@ public final class ProjectedSchema {
 
     /// Recursively collects all column indices under a schema node.
     private static void collectColumnsFromNode(SchemaNode node,
-                                               List<Integer> includedOriginalIndices,
+                                               List<@OriginalIndex Integer> includedOriginalIndices,
                                                int[] originalToProjected) {
         switch (node) {
             case SchemaNode.PrimitiveNode prim -> {
                 if (originalToProjected[prim.columnIndex()] < 0) {
-                    includedOriginalIndices.add(prim.columnIndex());
+                    includedOriginalIndices.add(originalIndex(prim));
                 }
             }
             case SchemaNode.GroupNode group -> {
@@ -379,6 +386,21 @@ public final class ProjectedSchema {
         }
     }
 
+    /// The index of a leaf of the reference schema.
+    // A leaf's columnIndex() is an index into the schema it came from, which only the caller
+    // knows; this is where that knowledge becomes a type.
+    @SuppressWarnings("columnindex")
+    public static @OriginalIndex int originalIndex(SchemaNode.PrimitiveNode leaf) {
+        return leaf.columnIndex();
+    }
+
+    /// The index of a column of the reference schema.
+    // As for the leaf overload.
+    @SuppressWarnings("columnindex")
+    public static @OriginalIndex int originalIndex(ColumnSchema column) {
+        return column.columnIndex();
+    }
+
     /// Returns the original file schema.
     public FileSchema getOriginalSchema() {
         return originalSchema;
@@ -407,7 +429,7 @@ public final class ProjectedSchema {
     /// @param projectedIndex the index in the projected schema (0-based)
     /// @return the corresponding index in the original schema
     /// @throws IndexOutOfBoundsException if projectedIndex is out of range
-    public int toOriginalIndex(int projectedIndex) {
+    public @OriginalIndex int toOriginalIndex(@ProjectedIndex int projectedIndex) {
         return projectedToOriginal[projectedIndex];
     }
 
@@ -415,7 +437,7 @@ public final class ProjectedSchema {
     ///
     /// @param originalIndex the index in the original schema
     /// @return the corresponding index in the projected schema, or -1 if not projected
-    public int toProjectedIndex(int originalIndex) {
+    public @ProjectedIndexOrAbsent int toProjectedIndex(@OriginalIndex int originalIndex) {
         if (originalIndex < 0 || originalIndex >= originalToProjected.length) {
             return -1;
         }
@@ -428,7 +450,7 @@ public final class ProjectedSchema {
     }
 
     /// Returns the projected column at the given projected index.
-    public ColumnSchema getProjectedColumn(int projectedIndex) {
+    public ColumnSchema getProjectedColumn(@ProjectedIndex int projectedIndex) {
         return projectedColumns.get(projectedIndex);
     }
 
@@ -440,7 +462,7 @@ public final class ProjectedSchema {
 
     /// Returns a copy of the projected-to-original index mapping.
     /// Each element is the original column index for the corresponding projected index.
-    public int[] toOriginalIndices() {
+    public @OriginalIndex int[] toOriginalIndices() {
         return projectedToOriginal.clone();
     }
 
