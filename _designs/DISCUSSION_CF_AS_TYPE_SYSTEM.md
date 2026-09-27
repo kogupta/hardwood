@@ -279,6 +279,52 @@ Findings:
 5. **Compile overhead unchanged** (188–193 s warm under the profile; the
    default build is untouched).
 
+## Experiment 2b — closing the chain (done, 2026-09-27)
+
+Experiment 2 left ~300 obligations in the cursor layer. Closing them taught
+the two mechanics that matter for any adoption plan:
+
+1. **A SameLen family must be built in one scope.** A factory that creates
+   fresh arrays and passes them through constructor parameters loses the
+   grouping — the checker cannot see that `new Object[n]` and `new int[n]`
+   share a length. The fix: create every family array from one
+   `batches.length` expression and assign straight to the fields (the
+   SameLen transfer's own rule: `b = new T[a.length]` implies b is
+   a-length). Family construction moved into NestedBatchIndex's
+   constructor; RecordShredder and ColumnBatch derive their arrays from the
+   anchor field's `.length`.
+2. **The descriptor/batch boundary needs one bridge.** Schema-derived column
+   indices (FieldDesc) and per-batch state are guaranteed to agree by
+   construction, but nothing establishes it where they meet. A single
+   `refineProjCol` check on NestedBatchIndex mints the
+   `@IndexFor("valueCounts")` type; every cursor call site (PqList/Map/
+   StructImpl, the typed list cursors, NestedBatchDataView,
+   VariantShredReassembler) goes through it. The key-only-map `-1` sentinel
+   keeps a non-throwing path — the annotation surfaced that contract too
+   (a test caught the first strict version).
+
+Whole-module profile warnings: **2,928 → 2,871**, below the pre-annotation
+baseline, with the four pilot classes and their cursor layer typed:
+
+| File | Baseline | Chain closed |
+| --- | --- | --- |
+| NestedBatchIndex | 67 | 38 |
+| ColumnBatch | 16 | 7 |
+| RecordShredder | 53 | 40 |
+| PqMapImpl | 51 | 39 |
+| PqIntListImpl | 21 | 16 |
+| NestedBatchDataView | 161 | 145 |
+| ProjectedSchema | 21 | 35 |
+| PqListImpl | 15 | 19 |
+| PqStructImpl | 24 | 27 |
+
+ProjectedSchema, PqListImpl and PqStructImpl sit slightly above baseline:
+their remaining warnings are the element-wise mapping gap (constructor sites
+that build mapping arrays value by value) and the inner jagged dimensions the
+prior note's stop condition excluded. Those are the honest price of typing the
+outer dimension; they are documented residuals, not regressions. Full core
+suite green throughout (13,994 tests).
+
 ## Costs, honestly
 
 - 8–14× compile overhead on `core` under the profile (opt-in; default builds
