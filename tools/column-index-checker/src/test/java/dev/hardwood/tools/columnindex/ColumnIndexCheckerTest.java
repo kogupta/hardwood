@@ -473,6 +473,73 @@ class ColumnIndexCheckerTest {
     }
 
     @Test
+    void patternBindingKeepsSpace() {
+        assertThat(check("""
+                String pattern(@OriginalIndex int original) {
+                    if (chunks instanceof ArrayList<String> list) {
+                        return list.get(original);
+                    }
+                    return switch ((Object) chunks) {
+                        case List<?> any -> "list";
+                        default -> "other";
+                    };
+                }
+                """)).containsExactly("""
+                18:27 [indexedby.handover] list is indexed by another column-index space than the value handed to it.
+                  found   : @IndexedBy(FileOrdinal.class)
+                  required: no @IndexedBy""",
+                """
+                22:14 [indexedby.handover] any is indexed by another column-index space than the value handed to it.
+                  found   : @IndexedBy(FileOrdinal.class)
+                  required: no @IndexedBy""");
+    }
+
+    @Test
+    void arrayInitializerHoldsNoSpace() {
+        assertThat(check("""
+                void initializers() {
+                    List<?>[] lists = new List<?>[] { chunks };
+                    Object[] objects = { chunks };
+                }
+                """)).containsExactly("""
+                18:39 [indexedby.handover] new List<?>[]{chunks} is indexed by another column-index space than the value handed to it.
+                  found   : @IndexedBy(FileOrdinal.class)
+                  required: no @IndexedBy""",
+                """
+                19:26 [indexedby.handover] {chunks} is indexed by another column-index space than the value handed to it.
+                  found   : @IndexedBy(FileOrdinal.class)
+                  required: no @IndexedBy""");
+    }
+
+    @Test
+    void viewsOverArraysKeepSpace() {
+        assertThat(check("""
+                void arrayViews(@IndexedBy(FileOrdinal.class) String[] names) {
+                    List<String> asList = Arrays.asList(names);
+                    List<String> of = List.of(names);
+                    List<String> synced = Collections.synchronizedList(chunks);
+                    Object copy = ((ArrayList<String>) chunks).clone();
+                    List<List<String>> wrapped = Arrays.asList(chunks);
+                }
+                """)).containsExactly("""
+                18:18 [indexedby.handover] asList is indexed by another column-index space than the value handed to it.
+                  found   : @IndexedBy(FileOrdinal.class)
+                  required: no @IndexedBy""",
+                """
+                19:18 [indexedby.handover] of is indexed by another column-index space than the value handed to it.
+                  found   : @IndexedBy(FileOrdinal.class)
+                  required: no @IndexedBy""",
+                """
+                20:18 [indexedby.handover] synced is indexed by another column-index space than the value handed to it.
+                  found   : @IndexedBy(FileOrdinal.class)
+                  required: no @IndexedBy""",
+                """
+                21:12 [indexedby.handover] copy is indexed by another column-index space than the value handed to it.
+                  found   : @IndexedBy(FileOrdinal.class)
+                  required: no @IndexedBy""");
+    }
+
+    @Test
     void castKeepsSpace() {
         assertThat(check("""
                 String cast(@IndexedBy(FileOrdinal.class) FileSchema schema, @OriginalIndex int original) {
@@ -610,6 +677,23 @@ class ColumnIndexCheckerTest {
                 }
                 """, List.of("-XDcompilePolicy=byTodo"), helper)).containsExactly("""
                 18:24 [indexedby.handover] list is indexed by another column-index space than the value handed to it.
+                  found   : @IndexedBy(FileOrdinal.class)
+                  required: no @IndexedBy""");
+    }
+
+    @Test
+    void localTypesArePartOfTheirClass() {
+        assertThat(check("""
+                void local() {
+                    enum Color { RED, GREEN }
+                    enum Size { SMALL(1); Size(int n) {} }
+                    record Pair(List<String> list) {}
+                    new Pair(chunks);
+                }
+                """, List.of("-AonlyDefs=^Read$"))).containsExactly("""
+                19:5 [class.unchecked] the column-index checker skips the bodies of local and anonymous classes; move this code into a method or a member class""",
+                """
+                21:14 [indexedby.handover] list is indexed by another column-index space than the value handed to it.
                   found   : @IndexedBy(FileOrdinal.class)
                   required: no @IndexedBy""");
     }

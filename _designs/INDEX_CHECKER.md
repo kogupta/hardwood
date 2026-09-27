@@ -99,14 +99,15 @@ Which space indexes a `FileSchema` or a `RowGroup.columns()` list depends on whi
 
 `column-index.astub`, bundled with the checker, marks `RowGroup.columns()` as `@IndexedBy(FileOrdinal.class)`. An `@IndexedBy` naming a class that is not one of the four spaces is an error at its declaration.
 
-An array, list or schema keeps its `@IndexedBy` when it is assigned to a variable, field or array element, passed to a parameter, or returned: source and target must name the same space, and a missing `@IndexedBy` on either side counts as a space of its own. An array element has no `@IndexedBy`, and neither has a target whose type is not an array, list or schema, such as `Object` or `Iterable`; handing a container of a space to one is an error. A parameter of a method declared outside the checked set accepts any array, list or schema, since the checker does not check that method's body. An array or object created with `new` fits any target; so do the elements of a varargs call, which form a new array. A value returned by a factory method, such as `List.of()`, has no `@IndexedBy`.
+An array, list or schema keeps its `@IndexedBy` when it is assigned to a variable, field or array element, passed to a parameter, returned, or bound to the variable of a type pattern (`x instanceof List<?> l`, or a `case` label of a `switch`): source and target must name the same space, and a missing `@IndexedBy` on either side counts as a space of its own. An array element, including one written in an array initializer, has no `@IndexedBy`, and neither has a target whose type is not an array, list or schema, such as `Object` or `Iterable`; handing a container of a space to one is an error. A parameter of a method declared outside the checked set accepts any array, list or schema, since the checker does not check that method's body. An array or object created with `new` fits any target, and a new object that is not an array, list or schema carries no space even when its constructor is given one; so do the elements of a varargs call, which form a new array. A value returned by a factory method, such as `List.of()`, has no `@IndexedBy`.
 
 A copy or a view carries the space of its source:
 
-- `a.clone()`, `Arrays.copyOf(a, n)`, `Arrays.copyOfRange(a, from, to)` and `List.copyOf(l)`;
+- `clone()` of an array or list, `Arrays.copyOf(a, n)`, `Arrays.copyOfRange(a, from, to)` and `List.copyOf(l)`;
 - a constructor given an array or list, such as `new ArrayList<>(chunks)`;
 - `schema.getColumns()`, whose positions are those of `schema.getColumn(int)`;
-- `l.toArray()`, `Collections.unmodifiableList(l)` and `Objects.requireNonNull(x)`;
+- `l.toArray()`, `Collections.unmodifiableList(l)`, `Collections.synchronizedList(l)` and `Objects.requireNonNull(x)`;
+- `Arrays.asList(a)` and `List.of(a)` given a whole array;
 - a cast, such as `(List<String>) iterable`.
 
 `subList` and `reversed` return lists whose positions differ from those of their source, so they carry no space. The container a subscript reads from is resolved the same way as a handover, so `schema.getColumns().get(i)` needs the index space of `schema`. A conditional or a `switch` expression carries the spaces of all its results, and each must fit.
@@ -136,10 +137,10 @@ The checker catches a mix-up of indices only in the checked set. A qualified par
 
 A literal written in place, such as the `0` in `list.get(0)` or a `-1` sentinel, fits every space. A position computed from the size of a container, such as `list.size() - 1`, belongs to no space and needs a conversion point.
 
-Only an `int` argument of the methods listed under Subscripts is checked. A position reached another way is not: `list.stream().skip(n)`, `ListIterator.nextIndex()`, a method reference such as `chunks::get`. Containers other than arrays, `List` and `FileSchema` carry no space, such as a `BitSet` of columns or a `Map` keyed by column index. A container returned from a lambda or a method reference, such as `() -> chunks` passed as a `Supplier`, loses its space. So does a container kept in another holder or passed through a method not listed above: an `Optional`, a `List<List<…>>`, a `Map` value, `List.of(chunks)` or a generic helper method.
+Only an `int` argument of the methods listed under Subscripts is checked. A position reached another way is not: `list.stream().skip(n)`, `ListIterator.nextIndex()`, a method reference such as `chunks::get`. Containers other than arrays, `List` and `FileSchema` carry no space, such as a `BitSet` of columns or a `Map` keyed by column index. A container returned from a lambda or a method reference, such as `() -> chunks` passed as a `Supplier`, loses its space. So does a container kept in another holder or passed through a method not listed above: an `Optional`, a `List<List<…>>`, a `Map` value, `List.of(chunks)`, a generic helper method, a lambda parameter, or the components of a record pattern. A container filled from another by a method such as `addAll` or `System.arraycopy` has no space of its own and does not take the source's.
 
 `@IndexedBy` names one space, so a method that takes a container of any space cannot be declared in the checked set; it belongs outside the set, or has one variant per space.
 
-The checker skips the bodies of local and anonymous classes. In a checked class, such a class is an error (`class.unchecked`) if it has code: a method body, a field initializer or an initializer block. A local record or interface without code is allowed. Code moved into a method or a member class is checked.
+The checker skips the bodies of local and anonymous classes. In a checked class, such a class is an error (`class.unchecked`) if it has code: a method body, a field initializer or an initializer block. A local record, interface or enum without code is allowed; an enum constant is code only if it has a body or an argument that is not a literal. Code moved into a method or a member class is checked.
 
 Stub annotations do not apply to the accessors of records nested in another type, such as `SchemaNode.PrimitiveNode`; they do apply to top-level records and to nested classes. The conversion points above cover the nested records.

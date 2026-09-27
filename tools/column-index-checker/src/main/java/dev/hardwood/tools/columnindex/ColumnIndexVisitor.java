@@ -16,11 +16,13 @@ import java.util.regex.Pattern;
 
 import javax.lang.model.element.AnnotationMirror;
 import javax.lang.model.element.Element;
+import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.Name;
 import javax.lang.model.element.NestingKind;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.VariableElement;
+import javax.lang.model.type.ArrayType;
 import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
 
@@ -37,14 +39,21 @@ import org.checkerframework.javacutil.TreeUtils;
 
 import com.sun.source.tree.ArrayAccessTree;
 import com.sun.source.tree.AssignmentTree;
+import com.sun.source.tree.BindingPatternTree;
+import com.sun.source.tree.CaseLabelTree;
+import com.sun.source.tree.CaseTree;
 import com.sun.source.tree.ClassTree;
 import com.sun.source.tree.ConditionalExpressionTree;
 import com.sun.source.tree.ExpressionTree;
+import com.sun.source.tree.InstanceOfTree;
 import com.sun.source.tree.MethodInvocationTree;
 import com.sun.source.tree.MethodTree;
+import com.sun.source.tree.NewArrayTree;
 import com.sun.source.tree.NewClassTree;
+import com.sun.source.tree.PatternCaseLabelTree;
 import com.sun.source.tree.ReturnTree;
 import com.sun.source.tree.SwitchExpressionTree;
+import com.sun.source.tree.SwitchTree;
 import com.sun.source.tree.Tree;
 import com.sun.source.tree.TypeCastTree;
 import com.sun.source.tree.VariableTree;
@@ -66,8 +75,9 @@ import dev.hardwood.tools.columnindex.qual.IndexedBy;
 ///   parameters of methods declared outside the checked classes accept any value.
 ///
 /// A container carries the space of its source when it is a copy, a view or a cast: `a.clone()`,
-/// `Arrays.copyOf(a, n)`, `Arrays.copyOfRange(a, from, to)`, `List.copyOf(l)`, `l.toArray()`,
-/// `Collections.unmodifiableList(l)`, `Objects.requireNonNull(x)` and `schema.getColumns()`. A
+/// `l.clone()`, `Arrays.copyOf(a, n)`, `Arrays.copyOfRange(a, from, to)`, `List.copyOf(l)`,
+/// `l.toArray()`, `Arrays.asList(a)`, `List.of(a)`, `Collections.unmodifiableList(l)`,
+/// `Collections.synchronizedList(l)`, `Objects.requireNonNull(x)` and `schema.getColumns()`. A
 /// conditional or a `switch` expression carries the spaces of all its results.
 ///
 /// A cast into a space is an error rather than a warning, so every conversion point carries a
@@ -147,6 +157,56 @@ public final class ColumnIndexVisitor extends BaseTypeVisitor<ColumnIndexAnnotat
     }
 
     @Override
+    public Void visitNewArray(NewArrayTree tree, Void p) {
+        if (tree.getInitializers() != null) {
+            TypeMirror component = ((ArrayType) TreeUtils.typeOf(tree)).getComponentType();
+            for (ExpressionTree initializer : tree.getInitializers()) {
+                // An array element carries no space of its own.
+                checkHandover(initializer, component, NONE, tree, initializer);
+            }
+        }
+        return super.visitNewArray(tree, p);
+    }
+
+    @Override
+    public Void visitInstanceOf(InstanceOfTree tree, Void p) {
+        checkPatternHandover(tree.getExpression(), tree.getPattern());
+        return super.visitInstanceOf(tree, p);
+    }
+
+    @Override
+    public Void visitSwitch(SwitchTree tree, Void p) {
+        checkCaseHandovers(tree.getExpression(), tree.getCases());
+        return super.visitSwitch(tree, p);
+    }
+
+    @Override
+    public Void visitSwitchExpression(SwitchExpressionTree tree, Void p) {
+        checkCaseHandovers(tree.getExpression(), tree.getCases());
+        return super.visitSwitchExpression(tree, p);
+    }
+
+    /// The type pattern of a `case` label receives the selector of its switch.
+    private void checkCaseHandovers(ExpressionTree selector, List<? extends CaseTree> cases) {
+        for (CaseTree caseTree : cases) {
+            for (CaseLabelTree label : caseTree.getLabels()) {
+                if (label instanceof PatternCaseLabelTree patternLabel) {
+                    checkPatternHandover(selector, patternLabel.getPattern());
+                }
+            }
+        }
+    }
+
+    /// The variable of a type pattern receives the value the pattern matches. The components of a
+    /// record pattern are not followed.
+    private void checkPatternHandover(ExpressionTree value, @Nullable Tree pattern) {
+        if (pattern instanceof BindingPatternTree binding) {
+            VariableElement target = TreeUtils.elementFromDeclaration(binding.getVariable());
+            checkHandover(value, target, space(target), binding);
+        }
+    }
+
+    @Override
     public Void visitVariable(VariableTree tree, Void p) {
         VariableElement target = TreeUtils.elementFromDeclaration(tree);
         if (target != null) {
@@ -190,7 +250,7 @@ public final class ColumnIndexVisitor extends BaseTypeVisitor<ColumnIndexAnnotat
                 case MethodTree method -> method.getBody() != null && !TreeUtils.isAutoGeneratedRecordMember(method)
                         && !TreeUtils.isAnonymousConstructor(method);
                 case VariableTree field -> field.getInitializer() != null
-                        && !TreeUtils.isAutoGeneratedRecordMember(field);
+                        && !TreeUtils.isAutoGeneratedRecordMember(field) && !isPlainEnumConstant(field);
                 case ClassTree nested -> hasCode(nested);
                 default -> true;
             };
@@ -199,6 +259,20 @@ public final class ColumnIndexVisitor extends BaseTypeVisitor<ColumnIndexAnnotat
             }
         }
         return false;
+    }
+
+    /// An enum constant with no body whose arguments, if any, are literals.
+    private static boolean isPlainEnumConstant(VariableTree field) {
+        if (TreeUtils.elementFromDeclaration(field).getKind() != ElementKind.ENUM_CONSTANT
+                || !(field.getInitializer() instanceof NewClassTree creation) || creation.getClassBody() != null) {
+            return false;
+        }
+        for (ExpressionTree argument : creation.getArguments()) {
+            if (!ColumnIndexAnnotatedTypeFactory.isLiteralValue(argument)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     @Override
@@ -273,7 +347,9 @@ public final class ColumnIndexVisitor extends BaseTypeVisitor<ColumnIndexAnnotat
     /// The answer depends on the class symbol only. When javac compiles one class at a time, the
     /// tree of another class may not be attributed yet, or may already be lowered to bytecode
     /// form; `SourceChecker.shouldSkipDefs(ClassTree)` needs an attributed tree, so this method
-    /// matches `skipDefs` and `onlyDefs` against the same name itself.
+    /// matches `skipDefs` and `onlyDefs` against the same name itself. The file options
+    /// (`skipFiles`, `onlyFiles`, `skipDirs`) are not applied, so a class that only they skip
+    /// counts as checked. The `column-index-check` profile does not set them.
     private boolean isChecked(Element element) {
         TypeElement type = ElementUtils.enclosingTypeElement(element);
         while (type != null && (type.getNestingKind() == NestingKind.LOCAL
@@ -295,18 +371,29 @@ public final class ColumnIndexVisitor extends BaseTypeVisitor<ColumnIndexAnnotat
 
     /// Checks a container handed to a target of `required` space. A container widened to a type
     /// that is not a container, such as `Object` or `Iterable`, is still checked: the target has
-    /// no [IndexedBy] and the container's space would be lost.
+    /// no [IndexedBy] and the container's space would be lost. So is a copy typed `Object`, such
+    /// as the result of `ArrayList.clone()`.
     private void checkHandover(ExpressionTree source, TypeMirror targetType, String required, Object target,
             Tree reportAt) {
-        if (!isContainer(targetType) && !isContainer(TreeUtils.typeOf(source))) {
+        List<ExpressionTree> origins = origins(source);
+        if (!isContainer(targetType) && !anyContainer(origins)) {
             return;
         }
-        for (String found : spaces(origins(source))) {
+        for (String found : spaces(origins)) {
             if (!found.equals(required)) {
                 checker.reportError(reportAt, "indexedby.handover", display(found), display(required),
                         target);
             }
         }
+    }
+
+    private boolean anyContainer(List<ExpressionTree> origins) {
+        for (ExpressionTree origin : origins) {
+            if (isContainer(TreeUtils.typeOf(origin))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /// The distinct spaces of `origins`, in order.
@@ -345,9 +432,12 @@ public final class ColumnIndexVisitor extends BaseTypeVisitor<ColumnIndexAnnotat
             }
             case TYPE_CAST -> collectOrigins(((TypeCastTree) value).getExpression(), origins);
             case NEW_CLASS -> {
-                for (ExpressionTree argument : ((NewClassTree) value).getArguments()) {
-                    if (isContainer(TreeUtils.typeOf(argument))) {
-                        collectOrigins(argument, origins);
+                // A new container copies the containers it is given; any other new object is fresh.
+                if (isContainer(TreeUtils.typeOf(value))) {
+                    for (ExpressionTree argument : ((NewClassTree) value).getArguments()) {
+                        if (isContainer(TreeUtils.typeOf(argument))) {
+                            collectOrigins(argument, origins);
+                        }
                     }
                 }
             }
@@ -370,19 +460,30 @@ public final class ColumnIndexVisitor extends BaseTypeVisitor<ColumnIndexAnnotat
         ExpressionTree receiver = TreeUtils.getReceiverTree(invocation);
         List<? extends ExpressionTree> arguments = invocation.getArguments();
         return switch (method.getSimpleName().toString()) {
-            case "clone" -> receiver != null && TreeUtils.typeOf(receiver).getKind() == TypeKind.ARRAY
-                    ? receiver : null;
+            case "clone" -> receiver != null && isContainer(TreeUtils.typeOf(receiver)) ? receiver : null;
+            case "asList" -> wholeArray(invocation, method, "java.util.Arrays");
+            case "of" -> wholeArray(invocation, method, "java.util.List");
             case "getColumns" -> receiver != null && isMemberOf(method, FILE_SCHEMA) ? receiver : null;
             case "toArray" -> receiver != null && isMemberOf(method, "java.util.List") ? receiver : null;
             case "copyOf", "copyOfRange" -> !arguments.isEmpty()
                     && (isMemberOf(method, "java.util.Arrays") || isMemberOf(method, "java.util.List"))
                     ? arguments.get(0) : null;
-            case "unmodifiableList" -> !arguments.isEmpty() && isMemberOf(method, "java.util.Collections")
+            case "unmodifiableList", "synchronizedList" -> !arguments.isEmpty() && isMemberOf(method, "java.util.Collections")
                     ? arguments.get(0) : null;
             case "requireNonNull" -> !arguments.isEmpty() && isMemberOf(method, "java.util.Objects")
                     ? arguments.get(0) : null;
             default -> null;
         };
+    }
+
+    /// The array that `invocation` hands as a whole to the varargs parameter of a method of `owner`,
+    /// or `null` when the call collects its arguments into a new array. `Arrays.asList(a)` and
+    /// `List.of(a)` keep the positions of `a`.
+    private @Nullable ExpressionTree wholeArray(MethodInvocationTree invocation, ExecutableElement method,
+            String owner) {
+        List<? extends ExpressionTree> arguments = invocation.getArguments();
+        return arguments.size() == 1 && method.isVarArgs() && !TreeUtils.isVarargsCall(invocation)
+                && isMemberOf(method, owner) ? arguments.get(0) : null;
     }
 
     /// Arrays, `java.util.List` and `FileSchema`: the types [IndexedBy] applies to.
