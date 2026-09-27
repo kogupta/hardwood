@@ -502,11 +502,11 @@ class ColumnIndexCheckerTest {
                     Object[] objects = { chunks };
                 }
                 """)).containsExactly("""
-                18:39 [indexedby.handover] new List<?>[]{chunks} is indexed by another column-index space than the value handed to it.
+                18:39 [indexedby.element] an element of new List<?>[]{chunks} has no @IndexedBy, so a container handed to it loses its column-index space.
                   found   : @IndexedBy(FileOrdinal.class)
                   required: no @IndexedBy""",
                 """
-                19:26 [indexedby.handover] {chunks} is indexed by another column-index space than the value handed to it.
+                19:26 [indexedby.element] an element of {chunks} has no @IndexedBy, so a container handed to it loses its column-index space.
                   found   : @IndexedBy(FileOrdinal.class)
                   required: no @IndexedBy""");
     }
@@ -586,7 +586,7 @@ class ColumnIndexCheckerTest {
                     lists[0] = chunks;
                 }
                 """)).containsExactly("""
-                18:14 [indexedby.handover] lists is indexed by another column-index space than the value handed to it.
+                18:14 [indexedby.element] an element of lists has no @IndexedBy, so a container handed to it loses its column-index space.
                   found   : @IndexedBy(FileOrdinal.class)
                   required: no @IndexedBy""");
     }

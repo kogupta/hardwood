@@ -70,7 +70,7 @@ public final class ColumnIndexAnnotatedTypeFactory extends BaseAnnotatedTypeFact
     }
 
     /// Whether `expression` is written with literals and operators alone.
-    static boolean isLiteralValue(ExpressionTree expression) {
+    private static boolean isLiteralValue(ExpressionTree expression) {
         ExpressionTree value = TreeUtils.withoutParens(expression);
         if (value instanceof LiteralTree) {
             return true;

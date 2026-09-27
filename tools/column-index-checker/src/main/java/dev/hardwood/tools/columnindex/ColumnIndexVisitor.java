@@ -145,7 +145,8 @@ public final class ColumnIndexVisitor extends BaseTypeVisitor<ColumnIndexAnnotat
         ExpressionTree variable = tree.getVariable();
         if (variable instanceof ArrayAccessTree element) {
             // An array element carries no space of its own.
-            checkHandover(tree.getExpression(), TreeUtils.typeOf(variable), NONE, element.getExpression(), tree);
+            checkHandover(tree.getExpression(), TreeUtils.typeOf(variable), NONE, element.getExpression(), tree,
+                    "indexedby.element");
         }
         else {
             Element target = TreeUtils.elementFromTree(variable);
@@ -162,7 +163,7 @@ public final class ColumnIndexVisitor extends BaseTypeVisitor<ColumnIndexAnnotat
             TypeMirror component = ((ArrayType) TreeUtils.typeOf(tree)).getComponentType();
             for (ExpressionTree initializer : tree.getInitializers()) {
                 // An array element carries no space of its own.
-                checkHandover(initializer, component, NONE, tree, initializer);
+                checkHandover(initializer, component, NONE, tree, initializer, "indexedby.element");
             }
         }
         return super.visitNewArray(tree, p);
@@ -261,18 +262,11 @@ public final class ColumnIndexVisitor extends BaseTypeVisitor<ColumnIndexAnnotat
         return false;
     }
 
-    /// An enum constant with no body whose arguments, if any, are literals.
+    /// An enum constant with neither arguments nor a body.
     private static boolean isPlainEnumConstant(VariableTree field) {
-        if (TreeUtils.elementFromDeclaration(field).getKind() != ElementKind.ENUM_CONSTANT
-                || !(field.getInitializer() instanceof NewClassTree creation) || creation.getClassBody() != null) {
-            return false;
-        }
-        for (ExpressionTree argument : creation.getArguments()) {
-            if (!ColumnIndexAnnotatedTypeFactory.isLiteralValue(argument)) {
-                return false;
-            }
-        }
-        return true;
+        return TreeUtils.elementFromDeclaration(field).getKind() == ElementKind.ENUM_CONSTANT
+                && field.getInitializer() instanceof NewClassTree creation
+                && creation.getArguments().isEmpty() && creation.getClassBody() == null;
     }
 
     @Override
@@ -366,7 +360,7 @@ public final class ColumnIndexVisitor extends BaseTypeVisitor<ColumnIndexAnnotat
     private void checkHandover(ExpressionTree source, Element target, String required, Tree reportAt) {
         TypeMirror targetType = target.getKind().isExecutable()
                 ? ((ExecutableElement) target).getReturnType() : target.asType();
-        checkHandover(source, targetType, required, target, reportAt);
+        checkHandover(source, targetType, required, target, reportAt, "indexedby.handover");
     }
 
     /// Checks a container handed to a target of `required` space. A container widened to a type
@@ -374,14 +368,14 @@ public final class ColumnIndexVisitor extends BaseTypeVisitor<ColumnIndexAnnotat
     /// no [IndexedBy] and the container's space would be lost. So is a copy typed `Object`, such
     /// as the result of `ArrayList.clone()`.
     private void checkHandover(ExpressionTree source, TypeMirror targetType, String required, Object target,
-            Tree reportAt) {
+            Tree reportAt, String messageKey) {
         List<ExpressionTree> origins = origins(source);
         if (!isContainer(targetType) && !anyContainer(origins)) {
             return;
         }
         for (String found : spaces(origins)) {
             if (!found.equals(required)) {
-                checker.reportError(reportAt, "indexedby.handover", display(found), display(required),
+                checker.reportError(reportAt, messageKey, display(found), display(required),
                         target);
             }
         }
